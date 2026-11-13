@@ -226,6 +226,14 @@ export class ChatGPTApi implements LLMApi {
     options.onController?.(controller);
 
     try {
+      // Include retained history and image data, not only the current attachments.
+      // Leave headroom below Vercel's request limit without discarding any content.
+      const serializedRequest = JSON.stringify(requestPayload);
+      if (new Blob([serializedRequest]).size > 4 * 1024 * 1024) {
+        throw new Error(
+          "本次请求（含历史消息和图片）超过 4 MiB，请新建对话或减少 PDF 页面、图片后重试。",
+        );
+      }
       const chatPath = this.path(
         isDalle3 ? OpenaiPath.ImagePath : OpenaiPath.ChatPath,
       );
@@ -328,7 +336,7 @@ export class ChatGPTApi implements LLMApi {
       } else {
         const chatPayload = {
           method: "POST",
-          body: JSON.stringify(requestPayload),
+          body: serializedRequest,
           signal: controller.signal,
           headers: getHeaders(),
         };

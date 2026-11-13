@@ -60,11 +60,12 @@ import { WelcomeCard } from "./welcome-card";
 import {
   ATTACHMENT_ACCEPT,
   MAX_DOCUMENTS,
+  MAX_FILES,
   MAX_IMAGES,
   MAX_TOTAL_CHARACTERS,
   TextAttachment,
   attachmentKind,
-  readTextAttachment,
+  readDocumentAttachment,
   messageWithAttachments,
 } from "../utils/attachments";
 
@@ -598,11 +599,13 @@ export function EditMessageModal(props: { onClose: () => void }) {
 export function DeleteImageButton(props: {
   deleteImage: () => void;
   disabled?: boolean;
+  label?: string;
 }) {
   return (
     <button
       type="button"
-      aria-label="移除图片"
+      aria-label={props.label ?? "移除图片"}
+      title={props.label ?? "移除图片"}
       disabled={props.disabled}
       className={styles["delete-image"]}
       onClick={props.deleteImage}
@@ -729,6 +732,10 @@ function _Chat() {
   const [documents, setDocuments] = useState<TextAttachment[]>([]);
   const [dragging, setDragging] = useState(false);
   const [attachmentError, setAttachmentError] = useState("");
+  // Keep page ownership separate from URL equality: two PDF pages can render identically.
+  const imageSources = useRef<
+    Array<{ documentId: string; page: number } | null>
+  >([]);
   const [copiedMessage, setCopiedMessage] = useState<string | null>(null);
   const dragDepth = useRef(0);
   const uploadInProgress = useRef(false);
@@ -818,6 +825,13 @@ function _Chat() {
       );
       return;
     }
+    if (
+      documents.reduce((sum, item) => sum + item.text.length, 0) >
+      MAX_TOTAL_CHARACTERS
+    ) {
+      setAttachmentError("附件文字合计超过 80,000 字符，请分次发送。");
+      return;
+    }
     const matchCommand = chatCommands.match(userInput);
     if (matchCommand.matched) {
       setUserInput("");
@@ -830,6 +844,7 @@ function _Chat() {
       .onUserInput(messageWithAttachments(userInput, documents), attachImages)
       .then(() => setIsLoading(false));
     setAttachImages([]);
+    imageSources.current = [];
     setDocuments([]);
     setAttachmentError("");
     chatStore.setLastInput(userInput);
@@ -1179,10 +1194,11 @@ function _Chat() {
     setUploading(true);
     setAttachmentError("");
     const nextImages = [...attachImages];
+    const nextImageSources = [...imageSources.current];
     const nextDocuments = [...documents];
     const errors: string[] = [];
     try {
-      for (const file of files.slice(0, MAX_DOCUMENTS + MAX_IMAGES)) {
+      for (const file of files.slice(0, MAX_FILES)) {
         try {
           const kind = attachmentKind(file);
           if (kind === "image") {
@@ -1190,12 +1206,21 @@ function _Chat() {
               throw new Error("当前模型不支持图片，请先切换支持视觉的模型。");
             }
             if (nextImages.length >= MAX_IMAGES)
-              throw new Error("每条消息最多添加 3 张图片。");
+              throw new Error(
+                `每条消息最多添加 ${MAX_IMAGES} 张图片（含 PDF 页面）。`,
+              );
             nextImages.push(await uploadImageRemote(file));
+            nextImageSources.push(null);
           } else {
             if (nextDocuments.length >= MAX_DOCUMENTS)
-              throw new Error("每条消息最多添加 5 份文档。");
-            const text = await readTextAttachment(file);
+              throw new Error(`每条消息最多添加 ${MAX_DOCUMENTS} 份文档。`);
+            const { text, images, notice } = await readDocumentAttachment(
+              file,
+              {
+                supportsVision: isVisionModel(session.mask.modelConfig.model),
+                maxImages: MAX_IMAGES - nextImages.length,
+              },
+            );
             if (
               nextDocuments.reduce((sum, item) => sum + item.text.length, 0) +
                 text.length >
@@ -1203,11 +1228,28 @@ function _Chat() {
             ) {
               throw new Error("附件文字合计超过 80,000 字符，请分次发送。");
             }
+            if (nextImages.length + images.length > MAX_IMAGES) {
+              throw new Error(
+                `图片位置不足，每条消息最多添加 ${MAX_IMAGES} 张图片（含 PDF 页面）。`,
+              );
+            }
+            // Append the complete PDF result only after both budgets pass. Its page
+            // images are already sized JPEG data URLs and must not be compressed again.
+            const id = crypto.randomUUID();
             nextDocuments.push({
-              id: crypto.randomUUID(),
+              id,
               name: file.name,
               text,
+              imageUrls: images.length ? images : undefined,
+              notice,
             });
+            nextImages.push(...images);
+            nextImageSources.push(
+              ...images.map((_, index) => ({
+                documentId: id,
+                page: index + 1,
+              })),
+            );
           }
         } catch (error) {
           errors.push(
@@ -1217,9 +1259,10 @@ function _Chat() {
           );
         }
       }
-      if (files.length > MAX_DOCUMENTS + MAX_IMAGES)
-        errors.push("一次最多添加 8 个文件，多余文件未添加。");
+      if (files.length > MAX_FILES)
+        errors.push(`一次最多添加 ${MAX_FILES} 个文件，多余文件未添加。`);
       if (mounted.current) {
+        imageSources.current = nextImageSources;
         setAttachImages(nextImages);
         setDocuments(nextDocuments);
         setAttachmentError(errors.join("\n"));
@@ -1227,6 +1270,65 @@ function _Chat() {
     } finally {
       uploadInProgress.current = false;
       if (mounted.current) setUploading(false);
+    }
+  }
+
+  function removeDocument(document: TextAttachment) {
+    if (uploadInProgress.current) return;
+    // Remove only this document's remaining occurrences, including identical pages.
+    const remaining = new Map<string, number>();
+    document.imageUrls?.forEach((url) =>
+      remaining.set(url, (remaining.get(url) ?? 0) + 1),
+    );
+    const keptSources: typeof imageSources.current = [];
+    const keptImages = attachImages.filter((image, index) => {
+      const source = imageSources.current[index] ?? null;
+      const count = remaining.get(image) ?? 0;
+      if (source?.documentId === document.id && count > 0) {
+        remaining.set(image, count - 1);
+        return false;
+      }
+      keptSources.push(source);
+      return true;
+    });
+    imageSources.current = keptSources;
+    setAttachImages(keptImages);
+    setDocuments((items) => items.filter((item) => item.id !== document.id));
+  }
+
+  function removeImage(index: number) {
+    if (uploadInProgress.current) return;
+    const source = imageSources.current[index];
+    const pageIndex = imageSources.current
+      .slice(0, index)
+      .filter((item) => item?.documentId === source?.documentId).length;
+    imageSources.current = imageSources.current.filter((_, i) => i !== index);
+    setAttachImages((images) => images.filter((_, i) => i !== index));
+    if (source) {
+      const pages = imageSources.current
+        .filter((item) => item?.documentId === source.documentId)
+        .map((item) => item!.page);
+      const adjustment = pages.length
+        ? `手动调整：现在仅附第 ${pages.join(
+            "、",
+          )} 页的图片，其他页面图片已移除。`
+        : "手动调整：全部页面图片已移除，现在仅附文件说明与已提取文字。";
+      setDocuments((items) =>
+        items.map((item) =>
+          item.id === source.documentId
+            ? {
+                ...item,
+                imageUrls: item.imageUrls?.filter((_, i) => i !== pageIndex),
+                notice: [item.notice?.split("\n手动调整：")[0], adjustment]
+                  .filter(Boolean)
+                  .join("\n"),
+                text:
+                  item.text.replace(/\n\n\[页面调整\][\s\S]*$/, "") +
+                  `\n\n[页面调整]\n${adjustment}`,
+              }
+            : item,
+        ),
+      );
     }
   }
 
@@ -1752,6 +1854,17 @@ function _Chat() {
                   {attachmentError}
                 </div>
               )}
+              {documents.some((document) => document.notice) && (
+                <div className={styles["attachment-notice"]} role="status">
+                  {documents
+                    .filter((document) => document.notice)
+                    .map((document) => (
+                      <div key={document.id}>
+                        <strong>{document.name}</strong>：{document.notice}
+                      </div>
+                    ))}
+                </div>
+              )}
               {documents.length > 0 && (
                 <div
                   className={styles["document-attachments"]}
@@ -1764,11 +1877,7 @@ function _Chat() {
                         type="button"
                         aria-label={`移除 ${document.name}`}
                         disabled={uploading}
-                        onClick={() =>
-                          setDocuments((items) =>
-                            items.filter((item) => item.id !== document.id),
-                          )
-                        }
+                        onClick={() => removeDocument(document)}
                       >
                         ×
                       </button>
@@ -1831,22 +1940,35 @@ function _Chat() {
                   }}
                 />
                 {attachImages.length != 0 && (
-                  <div className={styles["attach-images"]}>
+                  <div
+                    className={styles["attach-images"]}
+                    tabIndex={0}
+                    role="group"
+                    aria-label={`待发送图片，共 ${attachImages.length} 张；可左右滚动查看`}
+                  >
                     {attachImages.map((image, index) => {
+                      const source = imageSources.current[index];
+                      const document =
+                        source &&
+                        documents.find((item) => item.id === source.documentId);
+                      const description = document
+                        ? `${document.name}，第 ${source!.page} 页`
+                        : `第 ${index + 1} 张图片`;
                       return (
                         <div
                           key={index}
                           className={styles["attach-image"]}
                           style={{ backgroundImage: `url("${image}")` }}
+                          title={description}
                         >
+                          <span className={styles["attach-image-label"]}>
+                            {source ? `第 ${source.page} 页` : index + 1}
+                          </span>
                           <div className={styles["attach-image-mask"]}>
                             <DeleteImageButton
                               disabled={uploading}
-                              deleteImage={() => {
-                                setAttachImages(
-                                  attachImages.filter((_, i) => i !== index),
-                                );
-                              }}
+                              label={`移除${description}`}
+                              deleteImage={() => removeImage(index)}
                             />
                           </div>
                         </div>

@@ -128,3 +128,72 @@ test("existing GPT-4 vision payload behavior remains unchanged", async () => {
   expect(payload.messages).toEqual(messages);
   expect(payload.max_tokens).toBe(12345);
 });
+
+function pdfPage(): MultimodalContent {
+  const prefix = "data:image/jpeg;base64,";
+  return {
+    type: "image_url",
+    image_url: { url: prefix + "a".repeat(480 * 1024 - prefix.length) },
+  };
+}
+
+test.each([false, true])(
+  "rejects an oversized complete request including image history (stream=%s)",
+  async (stream) => {
+    const messages: ChatOptions["messages"] = [
+      { role: "user", content: Array.from({ length: 5 }, pdfPage) },
+      { role: "assistant", content: "请发送第二份 PDF。" },
+      { role: "user", content: Array.from({ length: 5 }, pdfPage) },
+    ];
+    const original = JSON.stringify(messages);
+    const onFinish = jest.fn();
+    const onError = jest.fn();
+    await new ChatGPTApi().chat({
+      config: { model: "gpt-6.1-sol", stream },
+      messages,
+      onFinish,
+      onError,
+    });
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBeInstanceOf(Error);
+    expect((onError.mock.calls[0][0] as Error).message).toContain(
+      "含历史消息和图片",
+    );
+    expect((onError.mock.calls[0][0] as Error).message).toContain("新建对话");
+    expect(onFinish).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+    // The guard rejects instead of dropping or mutating retained images.
+    expect(JSON.stringify(messages)).toBe(original);
+  },
+);
+
+test.each([false, true])(
+  "measures UTF-8 bytes instead of character count (stream=%s)",
+  async (stream) => {
+    const text = "中".repeat(1500000);
+    expect(text.length).toBeLessThan(4 * 1024 * 1024);
+    const onError = jest.fn();
+    await new ChatGPTApi().chat({
+      config: { model: "gpt-6.1-sol", stream },
+      messages: [{ role: "user", content: text }],
+      onFinish: jest.fn(),
+      onError,
+    });
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect((onError.mock.calls[0][0] as Error).message).toContain("超过 4 MiB");
+    expect(mockFetch).not.toHaveBeenCalled();
+  },
+);
+
+test("a valid five-page PDF at the per-page image limit still sends all five images", async () => {
+  const messages: ChatOptions["messages"] = [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "请阅读以下五页 PDF。" },
+        ...Array.from({ length: 5 }, pdfPage),
+      ],
+    },
+  ];
+  expect((await send("gpt-6.1-sol", messages)).messages).toEqual(messages);
+});
