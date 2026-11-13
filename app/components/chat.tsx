@@ -20,14 +20,10 @@ import SpeakIcon from "../icons/speak.svg";
 import SpeakStopIcon from "../icons/speak-stop.svg";
 import LoadingIcon from "../icons/three-dots.svg";
 import LoadingButtonIcon from "../icons/loading.svg";
-import PromptIcon from "../icons/prompt.svg";
-import MaskIcon from "../icons/mask.svg";
 import MaxIcon from "../icons/max.svg";
 import MinIcon from "../icons/min.svg";
 import ResetIcon from "../icons/reload.svg";
 import ReloadIcon from "../icons/reload.svg";
-import BreakIcon from "../icons/break.svg";
-import SettingsIcon from "../icons/chat-settings.svg";
 import DeleteIcon from "../icons/clear.svg";
 import PinIcon from "../icons/pin.svg";
 import ConfirmIcon from "../icons/confirm.svg";
@@ -35,31 +31,17 @@ import CloseIcon from "../icons/close.svg";
 import CancelIcon from "../icons/cancel.svg";
 import ImageIcon from "../icons/image.svg";
 
-import LightIcon from "../icons/light.svg";
-import DarkIcon from "../icons/dark.svg";
-import AutoIcon from "../icons/auto.svg";
 import BottomIcon from "../icons/bottom.svg";
 import StopIcon from "../icons/pause.svg";
 import RobotIcon from "../icons/robot.svg";
-import SizeIcon from "../icons/size.svg";
-import QualityIcon from "../icons/hd.svg";
-import StyleIcon from "../icons/palette.svg";
-import PluginIcon from "../icons/plugin.svg";
-import ShortcutkeyIcon from "../icons/shortcutkey.svg";
-import McpToolIcon from "../icons/tool.svg";
-import HeadphoneIcon from "../icons/headphone.svg";
 import {
-  BOT_HELLO,
   ChatMessage,
   createMessage,
   DEFAULT_TOPIC,
-  ModelType,
   SubmitKey,
-  Theme,
   useAccessStore,
   useAppConfig,
   useChatStore,
-  usePluginStore,
 } from "../store";
 
 import {
@@ -67,22 +49,28 @@ import {
   copyToClipboard,
   getMessageImages,
   getMessageTextContent,
-  isDalle3,
   isVisionModel,
   safeLocalStorage,
-  getModelSizes,
-  supportsCustomSize,
   useMobileScreen,
   selectOrCopy,
-  showPlugins,
 } from "../utils";
 
 import { uploadImage as uploadImageRemote } from "@/app/utils/chat";
+import { WelcomeCard } from "./welcome-card";
+import {
+  ATTACHMENT_ACCEPT,
+  MAX_DOCUMENTS,
+  MAX_IMAGES,
+  MAX_TOTAL_CHARACTERS,
+  TextAttachment,
+  attachmentKind,
+  readTextAttachment,
+  messageWithAttachments,
+} from "../utils/attachments";
 
 import dynamic from "next/dynamic";
 
 import { ChatControllerPool } from "../client/controller";
-import { DalleQuality, DalleStyle, ModelSize } from "../typing";
 import { Prompt, usePromptStore } from "../store/prompt";
 import Locale from "../locales";
 
@@ -120,11 +108,8 @@ import { ClientApi, MultimodalContent } from "../client/api";
 import { createTTSPlayer } from "../utils/audio";
 import { MsEdgeTTS, OUTPUT_FORMAT } from "../utils/ms_edge_tts";
 
-import { isEmpty } from "lodash-es";
-import { getModelProvider } from "../utils/model";
 import { RealtimeChat } from "@/app/components/realtime-chat";
 import clsx from "clsx";
-import { getAvailableClientsCount, isMcpEnabled } from "../mcp/actions";
 
 const localStorage = safeLocalStorage();
 
@@ -133,35 +118,6 @@ const ttsPlayer = createTTSPlayer();
 const Markdown = dynamic(async () => (await import("./markdown")).Markdown, {
   loading: () => <LoadingIcon />,
 });
-
-const MCPAction = () => {
-  const navigate = useNavigate();
-  const accessCode = useAccessStore((state) => state.accessCode);
-  const [count, setCount] = useState<number>(0);
-  const [mcpEnabled, setMcpEnabled] = useState(false);
-
-  useEffect(() => {
-    const checkMcpStatus = async () => {
-      const enabled = await isMcpEnabled();
-      setMcpEnabled(enabled);
-      if (enabled) {
-        const count = await getAvailableClientsCount(accessCode);
-        setCount(count);
-      }
-    };
-    checkMcpStatus();
-  }, [accessCode]);
-
-  if (!mcpEnabled) return null;
-
-  return (
-    <ChatAction
-      onClick={() => navigate(Path.McpMarket)}
-      text={`MCP${count ? ` (${count})` : ""}`}
-      icon={<McpToolIcon />}
-    />
-  );
-};
 
 export function SessionConfigModel(props: { onClose: () => void }) {
   const chatStore = useChatStore();
@@ -505,345 +461,85 @@ export function ChatActions(props: {
   setUserInput: (input: string) => void;
   setShowChatSidePanel: React.Dispatch<React.SetStateAction<boolean>>;
 }) {
-  const config = useAppConfig();
-  const navigate = useNavigate();
   const chatStore = useChatStore();
-  const pluginStore = usePluginStore();
   const session = chatStore.currentSession();
-
-  // switch themes
-  const theme = config.theme;
-
-  function nextTheme() {
-    const themes = [Theme.Auto, Theme.Light, Theme.Dark];
-    const themeIndex = themes.indexOf(theme);
-    const nextIndex = (themeIndex + 1) % themes.length;
-    const nextTheme = themes[nextIndex];
-    config.update((config) => (config.theme = nextTheme));
-  }
-
-  // stop all responses
-  const couldStop = ChatControllerPool.hasPending();
-  const stopAll = () => ChatControllerPool.stopAll();
-
-  // switch model
-  const currentModel = session.mask.modelConfig.model;
-  const currentProviderName =
-    session.mask.modelConfig?.providerName || ServiceProvider.OpenAI;
   const allModels = useAllModels();
-  const models = useMemo(() => {
-    const filteredModels = allModels.filter((m) => m.available);
-    const defaultModel = filteredModels.find((m) => m.isDefault);
-
-    if (defaultModel) {
-      const arr = [
-        defaultModel,
-        ...filteredModels.filter((m) => m !== defaultModel),
-      ];
-      return arr;
-    } else {
-      return filteredModels;
-    }
-  }, [allModels]);
-  const currentModelName = useMemo(() => {
-    const model = models.find(
-      (m) =>
-        m.name == currentModel &&
-        m?.provider?.providerName == currentProviderName,
-    );
-    return model?.displayName ?? "";
-  }, [models, currentModel, currentProviderName]);
+  const models = useMemo(
+    () =>
+      allModels.filter(
+        (model) =>
+          model.available &&
+          model.provider?.providerName === ServiceProvider.OpenAI,
+      ),
+    [allModels],
+  );
+  const currentModel = session.mask.modelConfig.model;
   const [showModelSelector, setShowModelSelector] = useState(false);
-  const [showPluginSelector, setShowPluginSelector] = useState(false);
-  const [showUploadImage, setShowUploadImage] = useState(false);
-
-  const [showSizeSelector, setShowSizeSelector] = useState(false);
-  const [showQualitySelector, setShowQualitySelector] = useState(false);
-  const [showStyleSelector, setShowStyleSelector] = useState(false);
-  const modelSizes = getModelSizes(currentModel);
-  const dalle3Qualitys: DalleQuality[] = ["standard", "hd"];
-  const dalle3Styles: DalleStyle[] = ["vivid", "natural"];
-  const currentSize =
-    session.mask.modelConfig?.size ?? ("1024x1024" as ModelSize);
-  const currentQuality = session.mask.modelConfig?.quality ?? "standard";
-  const currentStyle = session.mask.modelConfig?.style ?? "vivid";
-
-  const isMobileScreen = useMobileScreen();
 
   useEffect(() => {
-    const show = isVisionModel(currentModel);
-    setShowUploadImage(show);
-    if (!show) {
-      props.setAttachImages([]);
-      props.setUploading(false);
-    }
-
-    // if current model is not available
-    // switch to first available model
-    const isUnavailableModel = !models.some((m) => m.name === currentModel);
-    if (isUnavailableModel && models.length > 0) {
-      // show next model to default model if exist
-      let nextModel = models.find((model) => model.isDefault) || models[0];
-      chatStore.updateTargetSession(session, (session) => {
-        session.mask.modelConfig.model = nextModel.name;
-        session.mask.modelConfig.providerName = nextModel?.provider
-          ?.providerName as ServiceProvider;
+    if (
+      models.length &&
+      (!models.some((m) => m.name === currentModel) ||
+        session.mask.modelConfig.providerName !== ServiceProvider.OpenAI)
+    ) {
+      const next = models.find((m) => m.isDefault) ?? models[0];
+      chatStore.updateTargetSession(session, (target) => {
+        target.mask.modelConfig.model = next.name;
+        target.mask.modelConfig.providerName = ServiceProvider.OpenAI;
       });
-      showToast(
-        nextModel?.provider?.providerName == "ByteDance"
-          ? nextModel.displayName
-          : nextModel.name,
-      );
     }
-  }, [chatStore, currentModel, models, session]);
+  }, [chatStore, session, currentModel, models]);
 
   return (
     <div className={styles["chat-input-actions"]}>
-      <>
-        {couldStop && (
-          <ChatAction
-            onClick={stopAll}
-            text={Locale.Chat.InputActions.Stop}
-            icon={<StopIcon />}
-          />
-        )}
-        {!props.hitBottom && (
-          <ChatAction
-            onClick={props.scrollToBottom}
-            text={Locale.Chat.InputActions.ToBottom}
-            icon={<BottomIcon />}
-          />
-        )}
-        {props.hitBottom && (
-          <ChatAction
-            onClick={props.showPromptModal}
-            text={Locale.Chat.InputActions.Settings}
-            icon={<SettingsIcon />}
-          />
-        )}
-
-        {showUploadImage && (
-          <ChatAction
-            onClick={props.uploadImage}
-            text={Locale.Chat.InputActions.UploadImage}
-            icon={props.uploading ? <LoadingButtonIcon /> : <ImageIcon />}
-          />
-        )}
-        <ChatAction
-          onClick={nextTheme}
-          text={Locale.Chat.InputActions.Theme[theme]}
-          icon={
-            <>
-              {theme === Theme.Auto ? (
-                <AutoIcon />
-              ) : theme === Theme.Light ? (
-                <LightIcon />
-              ) : theme === Theme.Dark ? (
-                <DarkIcon />
-              ) : null}
-            </>
-          }
+      <IconButton
+        icon={props.uploading ? <LoadingButtonIcon /> : <ImageIcon />}
+        text={props.uploading ? "正在读取…" : "添加文件"}
+        aria="添加图片、PDF 或代码文件"
+        onClick={props.uploadImage}
+        disabled={props.uploading}
+      />
+      <IconButton
+        icon={<RobotIcon />}
+        text={
+          models.find((m) => m.name === currentModel)?.displayName ||
+          currentModel
+        }
+        aria="切换模型"
+        onClick={() => setShowModelSelector(true)}
+      />
+      {ChatControllerPool.hasPending() && (
+        <IconButton
+          icon={<StopIcon />}
+          text="停止生成"
+          onClick={() => ChatControllerPool.stopAll()}
         />
-
-        <ChatAction
-          onClick={props.showPromptHints}
-          text={Locale.Chat.InputActions.Prompt}
-          icon={<PromptIcon />}
+      )}
+      {!props.hitBottom && (
+        <IconButton
+          icon={<BottomIcon />}
+          text="回到底部"
+          onClick={props.scrollToBottom}
         />
-
-        <ChatAction
-          onClick={() => {
-            navigate(Path.Masks);
-          }}
-          text={Locale.Chat.InputActions.Masks}
-          icon={<MaskIcon />}
-        />
-
-        <ChatAction
-          text={Locale.Chat.InputActions.Clear}
-          icon={<BreakIcon />}
-          onClick={() => {
-            chatStore.updateTargetSession(session, (session) => {
-              if (session.clearContextIndex === session.messages.length) {
-                session.clearContextIndex = undefined;
-              } else {
-                session.clearContextIndex = session.messages.length;
-                session.memoryPrompt = ""; // will clear memory
-              }
+      )}
+      {showModelSelector && (
+        <Selector
+          defaultSelectedValue={currentModel}
+          items={models.map((m) => ({
+            title: m.displayName || m.name,
+            value: m.name,
+          }))}
+          onClose={() => setShowModelSelector(false)}
+          onSelection={(selected) => {
+            if (!selected.length) return;
+            chatStore.updateTargetSession(session, (target) => {
+              target.mask.modelConfig.model = selected[0];
+              target.mask.modelConfig.providerName = ServiceProvider.OpenAI;
+              target.mask.syncGlobalConfig = false;
             });
           }}
         />
-
-        <ChatAction
-          onClick={() => setShowModelSelector(true)}
-          text={currentModelName}
-          icon={<RobotIcon />}
-        />
-
-        {showModelSelector && (
-          <Selector
-            defaultSelectedValue={`${currentModel}@${currentProviderName}`}
-            items={models.map((m) => ({
-              title: `${m.displayName}${
-                m?.provider?.providerName
-                  ? " (" + m?.provider?.providerName + ")"
-                  : ""
-              }`,
-              value: `${m.name}@${m?.provider?.providerName}`,
-            }))}
-            onClose={() => setShowModelSelector(false)}
-            onSelection={(s) => {
-              if (s.length === 0) return;
-              const [model, providerName] = getModelProvider(s[0]);
-              chatStore.updateTargetSession(session, (session) => {
-                session.mask.modelConfig.model = model as ModelType;
-                session.mask.modelConfig.providerName =
-                  providerName as ServiceProvider;
-                session.mask.syncGlobalConfig = false;
-              });
-              if (providerName == "ByteDance") {
-                const selectedModel = models.find(
-                  (m) =>
-                    m.name == model &&
-                    m?.provider?.providerName == providerName,
-                );
-                showToast(selectedModel?.displayName ?? "");
-              } else {
-                showToast(model);
-              }
-            }}
-          />
-        )}
-
-        {supportsCustomSize(currentModel) && (
-          <ChatAction
-            onClick={() => setShowSizeSelector(true)}
-            text={currentSize}
-            icon={<SizeIcon />}
-          />
-        )}
-
-        {showSizeSelector && (
-          <Selector
-            defaultSelectedValue={currentSize}
-            items={modelSizes.map((m) => ({
-              title: m,
-              value: m,
-            }))}
-            onClose={() => setShowSizeSelector(false)}
-            onSelection={(s) => {
-              if (s.length === 0) return;
-              const size = s[0];
-              chatStore.updateTargetSession(session, (session) => {
-                session.mask.modelConfig.size = size;
-              });
-              showToast(size);
-            }}
-          />
-        )}
-
-        {isDalle3(currentModel) && (
-          <ChatAction
-            onClick={() => setShowQualitySelector(true)}
-            text={currentQuality}
-            icon={<QualityIcon />}
-          />
-        )}
-
-        {showQualitySelector && (
-          <Selector
-            defaultSelectedValue={currentQuality}
-            items={dalle3Qualitys.map((m) => ({
-              title: m,
-              value: m,
-            }))}
-            onClose={() => setShowQualitySelector(false)}
-            onSelection={(q) => {
-              if (q.length === 0) return;
-              const quality = q[0];
-              chatStore.updateTargetSession(session, (session) => {
-                session.mask.modelConfig.quality = quality;
-              });
-              showToast(quality);
-            }}
-          />
-        )}
-
-        {isDalle3(currentModel) && (
-          <ChatAction
-            onClick={() => setShowStyleSelector(true)}
-            text={currentStyle}
-            icon={<StyleIcon />}
-          />
-        )}
-
-        {showStyleSelector && (
-          <Selector
-            defaultSelectedValue={currentStyle}
-            items={dalle3Styles.map((m) => ({
-              title: m,
-              value: m,
-            }))}
-            onClose={() => setShowStyleSelector(false)}
-            onSelection={(s) => {
-              if (s.length === 0) return;
-              const style = s[0];
-              chatStore.updateTargetSession(session, (session) => {
-                session.mask.modelConfig.style = style;
-              });
-              showToast(style);
-            }}
-          />
-        )}
-
-        {showPlugins(currentProviderName, currentModel) && (
-          <ChatAction
-            onClick={() => {
-              if (pluginStore.getAll().length == 0) {
-                navigate(Path.Plugins);
-              } else {
-                setShowPluginSelector(true);
-              }
-            }}
-            text={Locale.Plugin.Name}
-            icon={<PluginIcon />}
-          />
-        )}
-        {showPluginSelector && (
-          <Selector
-            multiple
-            defaultSelectedValue={chatStore.currentSession().mask?.plugin}
-            items={pluginStore.getAll().map((item) => ({
-              title: `${item?.title}@${item?.version}`,
-              value: item?.id,
-            }))}
-            onClose={() => setShowPluginSelector(false)}
-            onSelection={(s) => {
-              chatStore.updateTargetSession(session, (session) => {
-                session.mask.plugin = s as string[];
-              });
-            }}
-          />
-        )}
-
-        {!isMobileScreen && (
-          <ChatAction
-            onClick={() => props.setShowShortcutKeyModal(true)}
-            text={Locale.Chat.ShortcutKey.Title}
-            icon={<ShortcutkeyIcon />}
-          />
-        )}
-        {!isMobileScreen && <MCPAction />}
-      </>
-      <div className={styles["chat-input-actions-end"]}>
-        {config.realtimeConfig.enable && (
-          <ChatAction
-            onClick={() => props.setShowChatSidePanel(true)}
-            text={"Realtime Chat"}
-            icon={<HeadphoneIcon />}
-          />
-        )}
-      </div>
+      )}
     </div>
   );
 }
@@ -912,11 +608,20 @@ export function EditMessageModal(props: { onClose: () => void }) {
   );
 }
 
-export function DeleteImageButton(props: { deleteImage: () => void }) {
+export function DeleteImageButton(props: {
+  deleteImage: () => void;
+  disabled?: boolean;
+}) {
   return (
-    <div className={styles["delete-image"]} onClick={props.deleteImage}>
+    <button
+      type="button"
+      aria-label="移除图片"
+      disabled={props.disabled}
+      className={styles["delete-image"]}
+      onClick={props.deleteImage}
+    >
       <DeleteIcon />
-    </div>
+    </button>
   );
 }
 
@@ -1034,6 +739,19 @@ function _Chat() {
   const navigate = useNavigate();
   const [attachImages, setAttachImages] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [documents, setDocuments] = useState<TextAttachment[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const [attachmentError, setAttachmentError] = useState("");
+  const [copiedMessage, setCopiedMessage] = useState<string | null>(null);
+  const dragDepth = useRef(0);
+  const uploadInProgress = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   // prompt hints
   const promptStore = usePromptStore();
@@ -1104,7 +822,15 @@ function _Chat() {
   };
 
   const doSubmit = (userInput: string) => {
-    if (userInput.trim() === "" && isEmpty(attachImages)) return;
+    if (uploadInProgress.current) return;
+    if (userInput.trim() === "" && !attachImages.length && !documents.length)
+      return;
+    if (attachImages.length && !isVisionModel(session.mask.modelConfig.model)) {
+      setAttachmentError(
+        "当前模型不支持图片，请切换支持视觉的模型，或移除图片后发送。",
+      );
+      return;
+    }
     const matchCommand = chatCommands.match(userInput);
     if (matchCommand.matched) {
       setUserInput("");
@@ -1114,9 +840,11 @@ function _Chat() {
     }
     setIsLoading(true);
     chatStore
-      .onUserInput(userInput, attachImages)
+      .onUserInput(messageWithAttachments(userInput, documents), attachImages)
       .then(() => setIsLoading(false));
     setAttachImages([]);
+    setDocuments([]);
+    setAttachmentError("");
     chatStore.setLastInput(userInput);
     setUserInput("");
     setPromptHints([]);
@@ -1335,17 +1063,6 @@ function _Chat() {
     return session.mask.hideContext ? [] : session.mask.context.slice();
   }, [session.mask.context, session.mask.hideContext]);
 
-  if (
-    context.length === 0 &&
-    session.messages.at(0)?.content !== BOT_HELLO.content
-  ) {
-    const copiedHello = Object.assign({}, BOT_HELLO);
-    if (!accessStore.isAuthorized()) {
-      copiedHello.content = Locale.Error.Unauthorized;
-    }
-    context.push(copiedHello);
-  }
-
   // preview messages
   const renderMessages = useMemo(() => {
     return context
@@ -1447,47 +1164,6 @@ function _Chat() {
     submit: (text) => {
       doSubmit(text);
     },
-    code: (text) => {
-      if (accessStore.disableFastLink) return;
-      console.log("[Command] got code from url: ", text);
-      showConfirm(Locale.URLCommand.Code + `code = ${text}`).then((res) => {
-        if (res) {
-          accessStore.update((access) => (access.accessCode = text));
-        }
-      });
-    },
-    settings: (text) => {
-      if (accessStore.disableFastLink) return;
-
-      try {
-        const payload = JSON.parse(text) as {
-          key?: string;
-          url?: string;
-        };
-
-        console.log("[Command] got settings from url: ", payload);
-
-        if (payload.key || payload.url) {
-          showConfirm(
-            Locale.URLCommand.Settings +
-              `\n${JSON.stringify(payload, null, 4)}`,
-          ).then((res) => {
-            if (!res) return;
-            if (payload.key) {
-              accessStore.update(
-                (access) => (access.openaiApiKey = payload.key!),
-              );
-            }
-            if (payload.url) {
-              accessStore.update((access) => (access.openaiUrl = payload.url!));
-            }
-            accessStore.update((access) => (access.useCustomConfig = true));
-          });
-        }
-      } catch {
-        console.error("[Command] failed to get settings from url: ", text);
-      }
-    },
   });
 
   // edit / insert message modal
@@ -1510,92 +1186,78 @@ function _Chat() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handlePaste = useCallback(
-    async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-      const currentModel = chatStore.currentSession().mask.modelConfig.model;
-      if (!isVisionModel(currentModel)) {
-        return;
-      }
-      const items = (event.clipboardData || window.clipboardData).items;
-      for (const item of items) {
-        if (item.kind === "file" && item.type.startsWith("image/")) {
-          event.preventDefault();
-          const file = item.getAsFile();
-          if (file) {
-            const images: string[] = [];
-            images.push(...attachImages);
-            images.push(
-              ...(await new Promise<string[]>((res, rej) => {
-                setUploading(true);
-                const imagesData: string[] = [];
-                uploadImageRemote(file)
-                  .then((dataUrl) => {
-                    imagesData.push(dataUrl);
-                    setUploading(false);
-                    res(imagesData);
-                  })
-                  .catch((e) => {
-                    setUploading(false);
-                    rej(e);
-                  });
-              })),
-            );
-            const imagesLength = images.length;
-
-            if (imagesLength > 3) {
-              images.splice(3, imagesLength - 3);
+  async function addFiles(files: File[]) {
+    if (uploadInProgress.current) return;
+    uploadInProgress.current = true;
+    setUploading(true);
+    setAttachmentError("");
+    const nextImages = [...attachImages];
+    const nextDocuments = [...documents];
+    const errors: string[] = [];
+    try {
+      for (const file of files.slice(0, MAX_DOCUMENTS + MAX_IMAGES)) {
+        try {
+          const kind = attachmentKind(file);
+          if (kind === "image") {
+            if (!isVisionModel(session.mask.modelConfig.model)) {
+              throw new Error("当前模型不支持图片，请先切换支持视觉的模型。");
             }
-            setAttachImages(images);
+            if (nextImages.length >= MAX_IMAGES)
+              throw new Error("每条消息最多添加 3 张图片。");
+            nextImages.push(await uploadImageRemote(file));
+          } else {
+            if (nextDocuments.length >= MAX_DOCUMENTS)
+              throw new Error("每条消息最多添加 5 份文档。");
+            const text = await readTextAttachment(file);
+            if (
+              nextDocuments.reduce((sum, item) => sum + item.text.length, 0) +
+                text.length >
+              MAX_TOTAL_CHARACTERS
+            ) {
+              throw new Error("附件文字合计超过 80,000 字符，请分次发送。");
+            }
+            nextDocuments.push({
+              id: crypto.randomUUID(),
+              name: file.name,
+              text,
+            });
           }
+        } catch (error) {
+          errors.push(
+            `${file.name}：${
+              error instanceof Error ? error.message : "读取失败，请重试。"
+            }`,
+          );
         }
       }
-    },
-    [attachImages, chatStore],
-  );
-
-  async function uploadImage() {
-    const images: string[] = [];
-    images.push(...attachImages);
-
-    images.push(
-      ...(await new Promise<string[]>((res, rej) => {
-        const fileInput = document.createElement("input");
-        fileInput.type = "file";
-        fileInput.accept =
-          "image/png, image/jpeg, image/webp, image/heic, image/heif";
-        fileInput.multiple = true;
-        fileInput.onchange = (event: any) => {
-          setUploading(true);
-          const files = event.target.files;
-          const imagesData: string[] = [];
-          for (let i = 0; i < files.length; i++) {
-            const file = event.target.files[i];
-            uploadImageRemote(file)
-              .then((dataUrl) => {
-                imagesData.push(dataUrl);
-                if (
-                  imagesData.length === 3 ||
-                  imagesData.length === files.length
-                ) {
-                  setUploading(false);
-                  res(imagesData);
-                }
-              })
-              .catch((e) => {
-                setUploading(false);
-                rej(e);
-              });
-          }
-        };
-        fileInput.click();
-      })),
-    );
-
-    const imagesLength = images.length;
-    if (imagesLength > 3) {
-      images.splice(3, imagesLength - 3);
+      if (files.length > MAX_DOCUMENTS + MAX_IMAGES)
+        errors.push("一次最多添加 8 个文件，多余文件未添加。");
+      if (mounted.current) {
+        setAttachImages(nextImages);
+        setDocuments(nextDocuments);
+        setAttachmentError(errors.join("\n"));
+      }
+    } finally {
+      uploadInProgress.current = false;
+      if (mounted.current) setUploading(false);
     }
-    setAttachImages(images);
+  }
+
+  function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const files = Array.from(event.clipboardData.files);
+    if (files.length) {
+      event.preventDefault();
+      void addFiles(files);
+    }
+  }
+
+  function uploadImage() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ATTACHMENT_ACCEPT;
+    input.multiple = true;
+    input.onchange = () => void addFiles(Array.from(input.files ?? []));
+    input.click();
   }
 
   // 快捷键 shortcut keys
@@ -1772,7 +1434,9 @@ function _Chat() {
         <div className={styles["chat-main"]}>
           <div className={styles["chat-body-container"]}>
             <div
-              className={styles["chat-body"]}
+              className={clsx(styles["chat-body"], {
+                [styles["chat-body-empty"]]: session.messages.length === 0,
+              })}
               ref={scrollRef}
               onScroll={(e) => onChatBodyScroll(e.currentTarget)}
               onMouseDown={() => inputRef.current?.blur()}
@@ -1781,6 +1445,7 @@ function _Chat() {
                 setAutoScroll(false);
               }}
             >
+              {session.messages.length === 0 && <WelcomeCard compact />}
               {messages
                 // TODO
                 // .filter((m) => !m.isMcpResponse)
@@ -1788,7 +1453,6 @@ function _Chat() {
                   const isUser = message.role === "user";
                   const isContext = i < context.length;
                   const showActions =
-                    i > 0 &&
                     !(message.preview || message.content.length === 0) &&
                     !isContext;
                   const showTyping = message.preview || message.streaming;
@@ -2028,6 +1692,28 @@ function _Chat() {
                             </div>
                           )}
 
+                          {!isUser &&
+                            !message.preview &&
+                            !message.streaming &&
+                            getMessageTextContent(message) && (
+                              <IconButton
+                                icon={<CopyIcon />}
+                                text={
+                                  copiedMessage === message.id
+                                    ? "已复制"
+                                    : "复制回复"
+                                }
+                                aria="复制回复"
+                                bordered
+                                className={styles["reply-copy"]}
+                                onClick={async () => {
+                                  const copied = await copyToClipboard(
+                                    getMessageTextContent(message),
+                                  );
+                                  if (copied) setCopiedMessage(message.id);
+                                }}
+                              />
+                            )}
                           <div className={styles["chat-message-action-date"]}>
                             {isContext
                               ? Locale.Chat.IsContext
@@ -2040,7 +1726,69 @@ function _Chat() {
                   );
                 })}
             </div>
-            <div className={styles["chat-input-panel"]}>
+            <div
+              className={clsx(styles["chat-input-panel"], {
+                [styles["drop-active"]]: dragging,
+              })}
+              onDragEnter={(event) => {
+                if (!event.dataTransfer.types.includes("Files")) return;
+                event.preventDefault();
+                dragDepth.current++;
+                setDragging(true);
+              }}
+              onDragOver={(event) => {
+                if (event.dataTransfer.types.includes("Files")) {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "copy";
+                }
+              }}
+              onDragLeave={(event) => {
+                event.preventDefault();
+                dragDepth.current = Math.max(0, dragDepth.current - 1);
+                if (dragDepth.current === 0) setDragging(false);
+              }}
+              onDrop={(event) => {
+                if (!event.dataTransfer.types.includes("Files")) return;
+                event.preventDefault();
+                dragDepth.current = 0;
+                setDragging(false);
+                void addFiles(Array.from(event.dataTransfer.files));
+              }}
+            >
+              {dragging && (
+                <div className={styles["drop-overlay"]} role="status">
+                  松开即可添加图片、PDF 或代码文件
+                </div>
+              )}
+              {attachmentError && (
+                <div className={styles["attachment-error"]} role="alert">
+                  {attachmentError}
+                </div>
+              )}
+              {documents.length > 0 && (
+                <div
+                  className={styles["document-attachments"]}
+                  aria-label="待发送文档"
+                >
+                  {documents.map((document) => (
+                    <div key={document.id} className={styles["document-chip"]}>
+                      <span title={document.name}>{document.name}</span>
+                      <button
+                        type="button"
+                        aria-label={`移除 ${document.name}`}
+                        disabled={uploading}
+                        onClick={() =>
+                          setDocuments((items) =>
+                            items.filter((item) => item.id !== document.id),
+                          )
+                        }
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <PromptHints
                 prompts={promptHints}
                 onPromptSelect={onPromptSelect}
@@ -2080,7 +1828,8 @@ function _Chat() {
                   id="chat-input"
                   ref={inputRef}
                   className={styles["chat-input"]}
-                  placeholder={Locale.Chat.Input(submitKey)}
+                  placeholder="写下你的问题，或将图片、PDF、代码文件拖到这里…"
+                  aria-label="消息输入框"
                   onInput={(e) => onInput(e.currentTarget.value)}
                   value={userInput}
                   onKeyDown={onInputKeyDown}
@@ -2105,6 +1854,7 @@ function _Chat() {
                         >
                           <div className={styles["attach-image-mask"]}>
                             <DeleteImageButton
+                              disabled={uploading}
                               deleteImage={() => {
                                 setAttachImages(
                                   attachImages.filter((_, i) => i !== index),
@@ -2123,6 +1873,8 @@ function _Chat() {
                   className={styles["chat-input-send"]}
                   type="primary"
                   onClick={() => doSubmit(userInput)}
+                  disabled={uploading}
+                  aria="发送消息"
                 />
               </label>
             </div>

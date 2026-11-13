@@ -1,3 +1,5 @@
+> **好友专属定制版**：多密码欢迎身份、精简界面及本地附件处理；Vercel 配置与功能边界请先阅读 [部署说明](docs/FRIENDS.md)。本版本统一使用服务端 OpenAI 兼容接口，不启用下方原版说明中的远端同步、插件市场或云端分享。
+
 <div align="center">
 
 <a href='https://nextchat.club'>

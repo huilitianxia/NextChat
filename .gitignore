@@ -47,5 +47,11 @@ dev
 
 masks.json
 
+# Generated PDF.js assets and local code-index metadata
+/public/pdfjs/
+/.serena/
+/.qa/
+/.nextchat-*.log
+
 # mcp config
 app/mcp/mcp_config.json

@@ -1,4 +1,5 @@
-import md5 from "spark-md5";
+import "server-only";
+import { getFriendAccessConfig } from "./friend-profiles";
 import { DEFAULT_MODELS, DEFAULT_GA_ID } from "../constant";
 import { isGPT4Model } from "../utils/model";
 
@@ -9,6 +10,7 @@ declare global {
 
       OPENAI_API_KEY?: string;
       CODE?: string;
+      FRIEND_PROFILES?: string;
 
       BASE_URL?: string;
       OPENAI_ORG_ID?: string; // openai only
@@ -100,31 +102,11 @@ declare global {
   }
 }
 
-const ACCESS_CODES = (function getAccessCodes(): Set<string> {
-  const code = process.env.CODE;
-
-  try {
-    const codes = (code?.split(",") ?? [])
-      .filter((v) => !!v)
-      .map((v) => md5.hash(v.trim()));
-    return new Set(codes);
-  } catch (e) {
-    return new Set();
-  }
-})();
-
 function getApiKey(keys?: string) {
   const apiKeyEnvVar = keys ?? "";
   const apiKeys = apiKeyEnvVar.split(",").map((v) => v.trim());
   const randomIndex = Math.floor(Math.random() * apiKeys.length);
   const apiKey = apiKeys[randomIndex];
-  if (apiKey) {
-    console.log(
-      `[Server Config] using ${randomIndex + 1} of ${
-        apiKeys.length
-      } api key - ${apiKey}`,
-    );
-  }
 
   return apiKey;
 }
@@ -258,21 +240,19 @@ export const getServerSideConfig = () => {
     gtmId: process.env.GTM_ID,
     gaId: process.env.GA_ID || DEFAULT_GA_ID,
 
-    needCode: ACCESS_CODES.size > 0,
-    code: process.env.CODE,
-    codes: ACCESS_CODES,
+    needCode: getFriendAccessConfig().required,
 
     proxyUrl: process.env.PROXY_URL,
     isVercel: !!process.env.VERCEL,
 
-    hideUserApiKey: !!process.env.HIDE_USER_API_KEY,
+    hideUserApiKey: true,
     disableGPT4,
-    hideBalanceQuery: !process.env.ENABLE_BALANCE_QUERY,
-    disableFastLink: !!process.env.DISABLE_FAST_LINK,
+    hideBalanceQuery: true,
+    disableFastLink: true,
     customModels,
     defaultModel,
     visionModels,
     allowedWebDavEndpoints,
-    enableMcp: process.env.ENABLE_MCP === "true",
+    enableMcp: false,
   };
 };

@@ -1,9 +1,91 @@
 @import "../styles/animation.scss";
 
+.chat-body-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-block: 36px;
+}
+
+.chat-input-panel.drop-active {
+  outline: 2px solid var(--primary);
+  outline-offset: -6px;
+  border-radius: 20px;
+  background: var(--second);
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 6px;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  color: var(--primary);
+  font-size: 14px;
+  font-weight: 600;
+  pointer-events: none;
+  padding: 20px;
+  text-align: center;
+}
+
+.attachment-error {
+  white-space: pre-wrap;
+  color: #b74c42;
+  font-size: 12px;
+  line-height: 1.6;
+  margin-bottom: 12px;
+  max-height: 90px;
+  overflow: auto;
+}
+
+.document-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.document-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: var(--border-in-light);
+  border-radius: 10px;
+  padding: 5px 8px 5px 12px;
+  font-size: 12px;
+  background: var(--second);
+  max-width: 90%;
+  span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  button {
+    border: none;
+    background: transparent;
+    color: var(--black);
+    cursor: pointer;
+    padding: 4px 8px;
+    font-size: 18px;
+  }
+}
+
+.reply-copy {
+  margin-top: 12px;
+  padding: 8px 12px;
+  color: var(--primary);
+  background: var(--second);
+  border-radius: 10px;
+  font-size: 12px;
+}
+
 .attach-images {
   position: absolute;
-  left: 30px;
-  bottom: 32px;
+  left: 14px;
+  bottom: 14px;
   display: flex;
 }
 
@@ -292,7 +374,7 @@
   flex: 1;
   overflow: auto;
   overflow-x: hidden;
-  padding: 20px;
+  padding: 24px clamp(18px, 4vw, 48px);
   padding-bottom: 40px;
   position: relative;
   overscroll-behavior: none;
@@ -331,7 +413,7 @@
 }
 
 .chat-message-header {
-  margin-top: 20px;
+  margin-top: 24px;
   display: flex;
   align-items: center;
 
@@ -365,6 +447,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  min-width: 0;
 
   &:hover {
     .chat-message-edit {
@@ -555,12 +638,18 @@
 .chat-input-panel {
   position: relative;
   width: 100%;
-  padding: 20px;
+  padding: 20px clamp(18px, 4vw, 48px) 26px;
   padding-top: 10px;
   box-sizing: border-box;
   flex-direction: column;
-  border-top: var(--border-in-light);
-  box-shadow: var(--card-shadow);
+  background: var(--glass);
+  backdrop-filter: blur(18px);
+
+  > .chat-input-actions {
+    justify-content: flex-start;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
 
   .chat-input-actions {
     .chat-input-action {
@@ -624,11 +713,15 @@
 }
 
 .chat-input-panel-inner {
+  position: relative;
+  overflow: hidden;
   cursor: text;
   display: flex;
   flex: 1;
-  border-radius: 10px;
+  border-radius: 18px;
   border: var(--border-in-light);
+  background: var(--white);
+  box-shadow: 0 4px 24px #00000004;
 }
 
 .chat-input-panel-inner-attach {
@@ -656,15 +749,20 @@
 }
 
 .chat-input:focus {
+  outline: none;
+}
+
+.chat-input:focus-visible {
+  outline: none;
 }
 
 .chat-input-send {
   background-color: var(--primary);
-  color: white;
+  color: var(--on-primary);
 
   position: absolute;
-  right: 30px;
-  bottom: 32px;
+  right: 10px;
+  bottom: 10px;
 }
 
 @media only screen and (max-width: 600px) {
@@ -673,7 +771,7 @@
   }
 
   .chat-input-send {
-    bottom: 30px;
+    bottom: 10px;
   }
 }
 

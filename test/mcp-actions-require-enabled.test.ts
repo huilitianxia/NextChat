@@ -78,24 +78,36 @@ describe("MCP server actions require MCP to be enabled", () => {
       process.env.CODE = "test-code";
     });
 
-    test("isMcpEnabled reports enabled", async () => {
-      expect(await isMcpEnabled()).toBe(true);
+    test("legacy ENABLE_MCP cannot enable processes in the serverless deployment", async () => {
+      expect(await isMcpEnabled()).toBe(false);
     });
 
-    test("getMcpConfigFromFile proceeds instead of rejecting", async () => {
-      await expect(getMcpConfigFromFile("test-code")).resolves.toBeDefined();
+    test("even a valid code cannot read local MCP configuration", async () => {
+      await expect(getMcpConfigFromFile("test-code")).rejects.toThrow(
+        "MCP is not enabled",
+      );
+    });
+
+    test("even a valid code cannot start a caller-provided command", async () => {
+      await expect(
+        addMcpServer(
+          "disabled",
+          { command: "unused", args: [] } as any,
+          "test-code",
+        ),
+      ).rejects.toThrow("MCP is not enabled");
     });
 
     test("getMcpConfigFromFile rejects an invalid access code", async () => {
       await expect(getMcpConfigFromFile("wrong-code")).rejects.toThrow(
-        "Unauthorized MCP request",
+        "MCP is not enabled",
       );
     });
 
     test("MCP fails closed when CODE is not configured", async () => {
       delete process.env.CODE;
       await expect(getMcpConfigFromFile("")).rejects.toThrow(
-        "MCP requires CODE to be configured",
+        "MCP is not enabled",
       );
     });
   });

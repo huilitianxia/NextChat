@@ -23,9 +23,9 @@ const CONFIG_PATH = path.join(process.cwd(), "app/mcp/mcp_config.json");
 
 const clientsMap = new Map<string, McpClientData>();
 
-// Every exported function in this "use server" module is directly callable over
-// HTTP. MCP therefore requires both an explicit feature flag and a configured,
-// valid deployment access code before exposing config or starting child processes.
+// Every exported function in this "use server" module is callable over HTTP.
+// This deployment has no persistent server storage or child-process support:
+// all actions are disabled, even if a legacy ENABLE_MCP variable is present.
 async function assertMcpAuthorized(accessCode: string) {
   if (!(await isMcpEnabled())) {
     throw new Error("MCP is not enabled");
@@ -422,5 +422,5 @@ async function updateMcpConfig(config: McpConfigData): Promise<void> {
 
 // 检查 MCP 是否启用
 export async function isMcpEnabled() {
-  return process.env.ENABLE_MCP === "true";
+  return false;
 }

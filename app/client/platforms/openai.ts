@@ -2,28 +2,17 @@
 // azure and openai, using same models. so using same LLMApi.
 import {
   ApiPath,
-  OPENAI_BASE_URL,
   DEFAULT_MODELS,
   OpenaiPath,
-  Azure,
   REQUEST_TIMEOUT_MS,
-  ServiceProvider,
 } from "@/app/constant";
-import {
-  ChatMessageTool,
-  useAccessStore,
-  useAppConfig,
-  useChatStore,
-  usePluginStore,
-} from "@/app/store";
-import { collectModelsWithDefaultModel } from "@/app/utils/model";
+import { ChatMessageTool, useAppConfig, useChatStore } from "@/app/store";
 import {
   preProcessImageContent,
   uploadImage,
   base64Image2Blob,
   streamWithThink,
 } from "@/app/utils/chat";
-import { cloudflareAIGatewayUrl } from "@/app/utils/cloudflare";
 import { ModelSize, DalleQuality, DalleStyle } from "@/app/typing";
 
 import {
@@ -36,7 +25,6 @@ import {
   SpeechOptions,
 } from "../api";
 import Locale from "../../locales";
-import { getClientConfig } from "@/app/config/client";
 import {
   getMessageTextContent,
   isVisionModel,
@@ -83,42 +71,7 @@ export class ChatGPTApi implements LLMApi {
   private disableListModels = true;
 
   path(path: string): string {
-    const accessStore = useAccessStore.getState();
-
-    let baseUrl = "";
-
-    const isAzure = path.includes("deployments");
-    if (accessStore.useCustomConfig) {
-      if (isAzure && !accessStore.isValidAzure()) {
-        throw Error(
-          "incomplete azure config, please check it in your settings page",
-        );
-      }
-
-      baseUrl = isAzure ? accessStore.azureUrl : accessStore.openaiUrl;
-    }
-
-    if (baseUrl.length === 0) {
-      const isApp = !!getClientConfig()?.isApp;
-      const apiPath = isAzure ? ApiPath.Azure : ApiPath.OpenAI;
-      baseUrl = isApp ? OPENAI_BASE_URL : apiPath;
-    }
-
-    if (baseUrl.endsWith("/")) {
-      baseUrl = baseUrl.slice(0, baseUrl.length - 1);
-    }
-    if (
-      !baseUrl.startsWith("http") &&
-      !isAzure &&
-      !baseUrl.startsWith(ApiPath.OpenAI)
-    ) {
-      baseUrl = "https://" + baseUrl;
-    }
-
-    console.log("[Proxy Endpoint] ", baseUrl, path);
-
-    // try rebuild url, when using cloudflare ai gateway in client
-    return cloudflareAIGatewayUrl([baseUrl, path].join("/"));
+    return `${ApiPath.OpenAI}/${path.replace(/^\/+/, "")}`;
   }
 
   async extractMessage(res: any) {
@@ -200,7 +153,7 @@ export class ChatGPTApi implements LLMApi {
       options.config.model.startsWith("o1") ||
       options.config.model.startsWith("o3") ||
       options.config.model.startsWith("o4-mini");
-    const isGpt5 =  options.config.model.startsWith("gpt-5");
+    const isGpt5 = options.config.model.startsWith("gpt-5");
     if (isDalle3) {
       const prompt = getMessageTextContent(
         options.messages.slice(-1)?.pop() as any,
@@ -231,7 +184,7 @@ export class ChatGPTApi implements LLMApi {
         messages,
         stream: options.config.stream,
         model: modelConfig.model,
-        temperature: (!isO1OrO3 && !isGpt5) ? modelConfig.temperature : 1,
+        temperature: !isO1OrO3 && !isGpt5 ? modelConfig.temperature : 1,
         presence_penalty: !isO1OrO3 ? modelConfig.presence_penalty : 0,
         frequency_penalty: !isO1OrO3 ? modelConfig.frequency_penalty : 0,
         top_p: !isO1OrO3 ? modelConfig.top_p : 1,
@@ -240,11 +193,10 @@ export class ChatGPTApi implements LLMApi {
       };
 
       if (isGpt5) {
-  	// Remove max_tokens if present
-  	delete requestPayload.max_tokens;
-  	// Add max_completion_tokens (or max_completion_tokens if that's what you meant)
-  	requestPayload["max_completion_tokens"] = modelConfig.max_tokens;
-
+        // Remove max_tokens if present
+        delete requestPayload.max_tokens;
+        // Add max_completion_tokens (or max_completion_tokens if that's what you meant)
+        requestPayload["max_completion_tokens"] = modelConfig.max_tokens;
       } else if (isO1OrO3) {
         // by default the o1/o3 models will not attempt to produce output that includes markdown formatting
         // manually add "Formatting re-enabled" developer message to encourage markdown inclusion in model responses
@@ -258,9 +210,8 @@ export class ChatGPTApi implements LLMApi {
         requestPayload["max_completion_tokens"] = modelConfig.max_tokens;
       }
 
-
       // add max_tokens to vision model
-      if (visionModel && !isO1OrO3 && ! isGpt5) {
+      if (visionModel && !isO1OrO3 && !isGpt5) {
         requestPayload["max_tokens"] = Math.max(modelConfig.max_tokens, 4000);
       }
     }
@@ -272,45 +223,14 @@ export class ChatGPTApi implements LLMApi {
     options.onController?.(controller);
 
     try {
-      let chatPath = "";
-      if (modelConfig.providerName === ServiceProvider.Azure) {
-        // find model, and get displayName as deployName
-        const { models: configModels, customModels: configCustomModels } =
-          useAppConfig.getState();
-        const {
-          defaultModel,
-          customModels: accessCustomModels,
-          useCustomConfig,
-        } = useAccessStore.getState();
-        const models = collectModelsWithDefaultModel(
-          configModels,
-          [configCustomModels, accessCustomModels].join(","),
-          defaultModel,
-        );
-        const model = models.find(
-          (model) =>
-            model.name === modelConfig.model &&
-            model?.provider?.providerName === ServiceProvider.Azure,
-        );
-        chatPath = this.path(
-          (isDalle3 ? Azure.ImagePath : Azure.ChatPath)(
-            (model?.displayName ?? model?.name) as string,
-            useCustomConfig ? useAccessStore.getState().azureApiVersion : "",
-          ),
-        );
-      } else {
-        chatPath = this.path(
-          isDalle3 ? OpenaiPath.ImagePath : OpenaiPath.ChatPath,
-        );
-      }
+      const chatPath = this.path(
+        isDalle3 ? OpenaiPath.ImagePath : OpenaiPath.ChatPath,
+      );
       if (shouldStream) {
         let index = -1;
-        const [tools, funcs] = usePluginStore
-          .getState()
-          .getAsTools(
-            useChatStore.getState().currentSession().mask?.plugin || [],
-          );
-        // console.log("getAsTools", tools, funcs);
+        // No persisted plugin may execute against this shared, serverless service.
+        const tools: never[] = [];
+        const funcs = {};
         streamWithThink(
           chatPath,
           requestPayload,

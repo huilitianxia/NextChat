@@ -11,7 +11,7 @@ import LoadingIcon from "../icons/three-dots.svg";
 import { getCSSVar, useMobileScreen } from "../utils";
 
 import dynamic from "next/dynamic";
-import { Path, SlotID } from "../constant";
+import { Path, SlotID, ServiceProvider } from "../constant";
 import { ErrorBoundary } from "./error";
 
 import { getISOLang, getLang } from "../locales";
@@ -21,6 +21,7 @@ import {
   Route,
   Routes,
   useLocation,
+  Navigate,
 } from "react-router-dom";
 import { SideBar } from "./sidebar";
 import { useAppConfig } from "../store/config";
@@ -29,7 +30,6 @@ import { getClientConfig } from "../config/client";
 import { type ClientApi, getClientApi } from "../client/api";
 import { useAccessStore } from "../store";
 import clsx from "clsx";
-import { initializeMcpSystem, isMcpEnabled } from "../mcp/actions";
 
 export function Loading(props: { noLogo?: boolean }) {
   return (
@@ -55,32 +55,6 @@ const Chat = dynamic(async () => (await import("./chat")).Chat, {
 const NewChat = dynamic(async () => (await import("./new-chat")).NewChat, {
   loading: () => <Loading noLogo />,
 });
-
-const MaskPage = dynamic(async () => (await import("./mask")).MaskPage, {
-  loading: () => <Loading noLogo />,
-});
-
-const PluginPage = dynamic(async () => (await import("./plugin")).PluginPage, {
-  loading: () => <Loading noLogo />,
-});
-
-const SearchChat = dynamic(
-  async () => (await import("./search-chat")).SearchChatPage,
-  {
-    loading: () => <Loading noLogo />,
-  },
-);
-
-const Sd = dynamic(async () => (await import("./sd")).Sd, {
-  loading: () => <Loading noLogo />,
-});
-
-const McpMarketPage = dynamic(
-  async () => (await import("./mcp-market")).McpMarketPage,
-  {
-    loading: () => <Loading noLogo />,
-  },
-);
 
 export function useSwitchTheme() {
   const config = useAppConfig();
@@ -134,21 +108,6 @@ const useHasHydrated = () => {
   return hasHydrated;
 };
 
-const loadAsyncGoogleFont = () => {
-  const linkEl = document.createElement("link");
-  const proxyFontUrl = "/google-fonts";
-  const remoteFontUrl = "https://fonts.googleapis.com";
-  const googleFontUrl =
-    getClientConfig()?.buildMode === "export" ? remoteFontUrl : proxyFontUrl;
-  linkEl.rel = "stylesheet";
-  linkEl.href =
-    googleFontUrl +
-    "/css2?family=" +
-    encodeURIComponent("Noto Sans:wght@300;400;700;900") +
-    "&display=swap";
-  document.head.appendChild(linkEl);
-};
-
 export function WindowContent(props: { children: React.ReactNode }) {
   return (
     <div className={styles["window-content"]} id={SlotID.AppBody}>
@@ -163,16 +122,18 @@ function Screen() {
   const isArtifact = location.pathname.includes(Path.Artifacts);
   const isHome = location.pathname === Path.Home;
   const isAuth = location.pathname === Path.Auth;
-  const isSd = location.pathname === Path.Sd;
-  const isSdNew = location.pathname === Path.SdNew;
+  const access = useAccessStore();
 
   const isMobileScreen = useMobileScreen();
   const shouldTightBorder =
     getClientConfig()?.isApp || (config.tightBorder && !isMobileScreen);
 
-  useEffect(() => {
-    loadAsyncGoogleFont();
-  }, []);
+  if (!access._hasHydrated || (!access.configReady && !isAuth)) {
+    return <Loading />;
+  }
+  if (!isAuth && !access.isAuthorized()) {
+    return <Navigate to={Path.Auth} replace />;
+  }
 
   if (isArtifact) {
     return (
@@ -183,8 +144,6 @@ function Screen() {
   }
   const renderContent = () => {
     if (isAuth) return <AuthPage />;
-    if (isSd) return <Sd />;
-    if (isSdNew) return <Sd />;
     return (
       <>
         <SideBar
@@ -196,12 +155,9 @@ function Screen() {
           <Routes>
             <Route path={Path.Home} element={<Chat />} />
             <Route path={Path.NewChat} element={<NewChat />} />
-            <Route path={Path.Masks} element={<MaskPage />} />
-            <Route path={Path.Plugins} element={<PluginPage />} />
-            <Route path={Path.SearchChat} element={<SearchChat />} />
             <Route path={Path.Chat} element={<Chat />} />
             <Route path={Path.Settings} element={<Settings />} />
-            <Route path={Path.McpMarket} element={<McpMarketPage />} />
+            <Route path="*" element={<Navigate to={Path.Chat} replace />} />
           </Routes>
         </WindowContent>
       </>
@@ -221,42 +177,36 @@ function Screen() {
 }
 
 export function useLoadData() {
-  const config = useAppConfig();
-
-  const api: ClientApi = getClientApi(config.modelConfig.providerName);
-
+  const access = useAccessStore();
+  const authorized =
+    access.configReady && (!access.needCode || access.identityVerified);
   useEffect(() => {
-    (async () => {
-      const models = await api.llm.models();
-      config.mergeModels(models);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!authorized) return;
+    let active = true;
+    const api: ClientApi = getClientApi(ServiceProvider.OpenAI);
+    api.llm
+      .models()
+      .then((models) => {
+        if (active) useAppConfig.getState().mergeModels(models);
+      })
+      .catch(() => {
+        // The configured list remains available if model discovery is unavailable.
+      });
+    return () => {
+      active = false;
+    };
+  }, [authorized]);
 }
 
 export function Home() {
   useSwitchTheme();
   useLoadData();
   useHtmlLang();
+  const accessHydrated = useAccessStore((state) => state._hasHydrated);
 
   useEffect(() => {
-    console.log("[Config] got config from build time", getClientConfig());
-    useAccessStore.getState().fetch();
-
-    const initMcp = async () => {
-      try {
-        const enabled = await isMcpEnabled();
-        if (enabled) {
-          console.log("[MCP] initializing...");
-          await initializeMcpSystem(useAccessStore.getState().accessCode);
-          console.log("[MCP] initialized");
-        }
-      } catch (err) {
-        console.error("[MCP] failed to initialize:", err);
-      }
-    };
-    initMcp();
-  }, []);
+    if (accessHydrated) useAccessStore.getState().fetch();
+  }, [accessHydrated]);
 
   if (!useHasHydrated()) {
     return <Loading />;

@@ -3,6 +3,8 @@
   "private": false,
   "license": "mit",
   "scripts": {
+    "predev": "node scripts/prepare-pdf-assets.mjs",
+    "prebuild": "node scripts/prepare-pdf-assets.mjs",
     "mask": "npx tsx app/masks/build.ts",
     "mask:watch": "npx watch \"yarn mask\" app/masks",
     "dev": "concurrently -r \"yarn run mask:watch\" \"next dev\"",
@@ -17,8 +19,8 @@
     "prompts": "node ./scripts/fetch-prompts.mjs",
     "prepare": "husky install",
     "proxy-dev": "sh ./scripts/init-proxy.sh && proxychains -f ./scripts/proxychains.conf yarn dev",
-    "test": "node --no-warnings --experimental-vm-modules $(yarn bin jest) --watch",
-    "test:ci": "node --no-warnings --experimental-vm-modules $(yarn bin jest) --ci"
+    "test": "node --no-warnings --experimental-vm-modules ./node_modules/jest/bin/jest.js --watch",
+    "test:ci": "node --no-warnings --experimental-vm-modules ./node_modules/jest/bin/jest.js --ci"
   },
   "dependencies": {
     "@fortaine/fetch-event-source": "^3.0.6",
@@ -42,6 +44,7 @@
     "next": "^14.1.1",
     "node-fetch": "^3.3.1",
     "openapi-client-axios": "^7.5.5",
+    "pdfjs-dist": "4.10.38",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^8.0.7",
@@ -53,12 +56,14 @@
     "remark-math": "^5.1.1",
     "rt-client": "https://github.com/Azure-Samples/aoai-realtime-audio-sdk/releases/download/js/v0.5.0/rt-client-0.5.0.tgz",
     "sass": "^1.59.2",
+    "server-only": "0.0.1",
     "spark-md5": "^3.0.2",
     "use-debounce": "^9.0.4",
     "zod": "^3.24.1",
     "zustand": "^4.3.8"
   },
   "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "6.4.0",
     "@tauri-apps/api": "^2.1.1",
     "@tauri-apps/cli": "1.5.11",
     "@testing-library/dom": "^10.4.0",

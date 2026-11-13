@@ -19,14 +19,14 @@ import {
   SILICONFLOW_BASE_URL,
   AI302_BASE_URL,
 } from "../constant";
-import { getHeaders } from "../client/api";
+import type { FriendProfile } from "../config/friend-profiles";
 import { getClientConfig } from "../config/client";
 import { createPersistStore } from "../utils/store";
-import { ensure } from "../utils/clone";
 import { DEFAULT_CONFIG } from "./config";
 import { getModelProvider } from "../utils/model";
 
-let fetchState = 0; // 0 not fetch, 1 fetching, 2 done
+let fetchState = 0; // 0 not fetched, 1 fetching, 2 done
+let verificationVersion = 0;
 
 const isApp = getClientConfig()?.buildMode === "export";
 
@@ -64,6 +64,9 @@ const DEFAULT_AI302_URL = isApp ? AI302_BASE_URL : ApiPath["302.AI"];
 
 const DEFAULT_ACCESS_STATE = {
   accessCode: "",
+  friendProfile: null as FriendProfile | null,
+  identityVerified: false,
+  configReady: false,
   useCustomConfig: false,
 
   provider: ServiceProvider.OpenAI,
@@ -141,10 +144,10 @@ const DEFAULT_ACCESS_STATE = {
 
   // server config
   needCode: true,
-  hideUserApiKey: false,
-  hideBalanceQuery: false,
+  hideUserApiKey: true,
+  hideBalanceQuery: true,
   disableGPT4: false,
-  disableFastLink: false,
+  disableFastLink: true,
   customModels: "",
   defaultModel: "",
   visionModels: "",
@@ -172,132 +175,187 @@ export const useAccessStore = createPersistStore(
       return get().edgeTTSVoiceName;
     },
 
+    // This shared deployment never accepts browser-supplied provider keys.
     isValidOpenAI() {
-      return ensure(get(), ["openaiApiKey"]);
+      return false;
     },
-
     isValidAzure() {
-      return ensure(get(), ["azureUrl", "azureApiKey", "azureApiVersion"]);
+      return false;
     },
-
     isValidGoogle() {
-      return ensure(get(), ["googleApiKey"]);
+      return false;
     },
-
     isValidAnthropic() {
-      return ensure(get(), ["anthropicApiKey"]);
+      return false;
     },
-
     isValidBaidu() {
-      return ensure(get(), ["baiduApiKey", "baiduSecretKey"]);
+      return false;
     },
-
     isValidByteDance() {
-      return ensure(get(), ["bytedanceApiKey"]);
+      return false;
     },
-
     isValidAlibaba() {
-      return ensure(get(), ["alibabaApiKey"]);
+      return false;
     },
-
     isValidTencent() {
-      return ensure(get(), ["tencentSecretKey", "tencentSecretId"]);
+      return false;
     },
-
     isValidMoonshot() {
-      return ensure(get(), ["moonshotApiKey"]);
+      return false;
     },
     isValidIflytek() {
-      return ensure(get(), ["iflytekApiKey"]);
+      return false;
     },
     isValidDeepSeek() {
-      return ensure(get(), ["deepseekApiKey"]);
+      return false;
     },
-
     isValidXAI() {
-      return ensure(get(), ["xaiApiKey"]);
+      return false;
     },
-
     isValidChatGLM() {
-      return ensure(get(), ["chatglmApiKey"]);
+      return false;
     },
-
     isValidSiliconFlow() {
-      return ensure(get(), ["siliconflowApiKey"]);
+      return false;
     },
-
+    async verifyAccessCode(code: string): Promise<void> {
+      const revision = ++verificationVersion;
+      if (typeof code !== "string" || code.length > 256) {
+        throw new Error("访问密码格式不正确");
+      }
+      const normalized = code.trim();
+      const res = await fetch("/api/auth/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ code: normalized }),
+      });
+      const data = await res.json();
+      if (revision !== verificationVersion) throw new Error("登录操作已取消");
+      if (!res.ok) {
+        set({ accessCode: "", friendProfile: null, identityVerified: false });
+        throw new Error(
+          typeof data.error === "string" ? data.error : "验证失败，请稍后重试",
+        );
+      }
+      if (
+        !data ||
+        typeof data.name !== "string" ||
+        typeof data.greeting !== "string" ||
+        typeof data.badge !== "string"
+      ) {
+        throw new Error("验证服务返回异常，请稍后重试");
+      }
+      set({
+        accessCode: normalized,
+        friendProfile: {
+          name: data.name,
+          greeting: data.greeting,
+          badge: data.badge,
+        },
+        identityVerified: true,
+        useCustomConfig: false,
+        openaiApiKey: "",
+        openaiUrl: ApiPath.OpenAI,
+      });
+    },
+    clearIdentity() {
+      verificationVersion++;
+      set({
+        accessCode: "",
+        friendProfile: null,
+        identityVerified: false,
+        useCustomConfig: false,
+        openaiApiKey: "",
+        openaiUrl: ApiPath.OpenAI,
+      });
+    },
     isAuthorized() {
       this.fetch();
-
-      // has token or has code or disabled access control
       return (
-        this.isValidOpenAI() ||
-        this.isValidAzure() ||
-        this.isValidGoogle() ||
-        this.isValidAnthropic() ||
-        this.isValidBaidu() ||
-        this.isValidByteDance() ||
-        this.isValidAlibaba() ||
-        this.isValidTencent() ||
-        this.isValidMoonshot() ||
-        this.isValidIflytek() ||
-        this.isValidDeepSeek() ||
-        this.isValidXAI() ||
-        this.isValidChatGLM() ||
-        this.isValidSiliconFlow() ||
-        !this.enabledAccessControl() ||
-        (this.enabledAccessControl() && ensure(get(), ["accessCode"]))
+        get().configReady &&
+        (!get().needCode || (get().identityVerified && !!get().friendProfile))
       );
     },
     fetch() {
-      if (fetchState > 0 || getClientConfig()?.buildMode === "export") return;
+      if (fetchState > 0) return;
       fetchState = 1;
-      fetch("/api/config", {
-        method: "post",
-        body: null,
-        headers: {
-          ...getHeaders(),
-        },
-      })
-        .then((res) => res.json())
-        .then((res) => {
-          const defaultModel = res.defaultModel ?? "";
-          if (defaultModel !== "") {
-            const [model, providerName] = getModelProvider(defaultModel);
+      fetch("/api/config", { method: "POST", cache: "no-store" })
+        .then(async (response) => {
+          if (!response.ok) throw new Error("配置读取失败");
+          const res: DangerConfig = await response.json();
+          set({
+            needCode: res.needCode !== false,
+            hideUserApiKey: true,
+            hideBalanceQuery: true,
+            disableFastLink: true,
+            customModels: res.customModels ?? "",
+            defaultModel: res.defaultModel ?? "",
+            visionModels: res.visionModels ?? "",
+            disableGPT4: !!res.disableGPT4,
+          });
+          if (res.defaultModel) {
+            const [model] = getModelProvider(res.defaultModel);
             DEFAULT_CONFIG.modelConfig.model = model;
-            DEFAULT_CONFIG.modelConfig.providerName = providerName as any;
+            DEFAULT_CONFIG.modelConfig.providerName = ServiceProvider.OpenAI;
           }
-
-          return res;
-        })
-        .then((res: DangerConfig) => {
-          console.log("[Config] got config from server", res);
-          set(() => ({ ...res }));
+          // Revalidate on reload; local profile data never grants server access.
+          if (get().accessCode || !get().needCode) {
+            try {
+              await this.verifyAccessCode(get().accessCode);
+            } catch {
+              set({ identityVerified: false });
+            }
+          }
         })
         .catch(() => {
-          console.error("[Config] failed to fetch config");
+          set({ identityVerified: false });
         })
         .finally(() => {
           fetchState = 2;
+          set({ configReady: true });
         });
     },
   }),
   {
     name: StoreKey.Access,
-    version: 2,
-    migrate(persistedState, version) {
-      if (version < 2) {
-        const state = persistedState as {
-          token: string;
-          openaiApiKey: string;
-          azureApiVersion: string;
-          googleApiKey: string;
-        };
-        state.openaiApiKey = state.token;
-        state.azureApiVersion = "2023-08-01-preview";
-      }
-
-      return persistedState as any;
+    version: 3,
+    // Only this browser's identity is retained, never provider keys or URLs.
+    partialize: (state) =>
+      ({
+        accessCode: state.accessCode,
+        friendProfile: state.friendProfile,
+        _hasHydrated: state._hasHydrated,
+      }) as any,
+    migrate: (persistedState) => persistedState as any,
+    merge: (persistedState, currentState) => {
+      const saved = (persistedState ?? {}) as Partial<
+        typeof DEFAULT_ACCESS_STATE
+      >;
+      const profile = saved.friendProfile;
+      return {
+        ...currentState,
+        accessCode:
+          typeof saved.accessCode === "string" && saved.accessCode.length <= 256
+            ? saved.accessCode
+            : "",
+        friendProfile:
+          profile &&
+          typeof profile.name === "string" &&
+          typeof profile.greeting === "string" &&
+          typeof profile.badge === "string"
+            ? {
+                name: profile.name,
+                greeting: profile.greeting,
+                badge: profile.badge,
+              }
+            : null,
+        identityVerified: false,
+        configReady: false,
+        useCustomConfig: false,
+        openaiApiKey: "",
+        openaiUrl: ApiPath.OpenAI,
+      };
     },
   },
 );

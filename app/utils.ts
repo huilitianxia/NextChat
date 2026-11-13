@@ -34,6 +34,7 @@ export async function copyToClipboard(text: string) {
     }
 
     showToast(Locale.Copy.Success);
+    return true;
   } catch (error) {
     const textArea = document.createElement("textarea");
     textArea.value = text;
@@ -41,12 +42,15 @@ export async function copyToClipboard(text: string) {
     textArea.focus();
     textArea.select();
     try {
-      document.execCommand("copy");
+      if (!document.execCommand("copy")) throw new Error("Copy failed");
       showToast(Locale.Copy.Success);
+      return true;
     } catch (error) {
       showToast(Locale.Copy.Failed);
+      return false;
+    } finally {
+      document.body.removeChild(textArea);
     }
-    document.body.removeChild(textArea);
   }
 }
 

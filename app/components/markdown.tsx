@@ -133,7 +133,9 @@ export function PreCode(props: { children: any }) {
   return (
     <>
       <pre ref={ref}>
-        <span
+        <button
+          type="button"
+          aria-label="复制代码"
           className="copy-code-button"
           onClick={() => {
             if (ref.current) {
@@ -142,7 +144,9 @@ export function PreCode(props: { children: any }) {
               );
             }
           }}
-        ></span>
+        >
+          复制代码
+        </button>
         {props.children}
       </pre>
       {mermaidCode.length > 0 && (

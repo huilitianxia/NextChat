@@ -1,13 +1,13 @@
 @mixin container {
-  background-color: var(--white);
+  background-color: var(--glass);
   border: var(--border-in-light);
-  border-radius: 20px;
+  border-radius: 26px;
   box-shadow: var(--shadow);
   color: var(--black);
-  background-color: var(--white);
+  backdrop-filter: blur(24px);
   min-width: 600px;
   min-height: 370px;
-  max-width: 1200px;
+  max-width: 1440px;
 
   display: flex;
   overflow: hidden;
@@ -42,10 +42,10 @@
   width: var(--sidebar-width);
   box-sizing: border-box;
   padding: 20px;
-  background-color: var(--second);
+  background: color-mix(in srgb, var(--second) 82%, transparent);
   display: flex;
   flex-direction: column;
-  box-shadow: inset -2px 0px 2px 0px rgb(0, 0, 0, 0.05);
+  border-right: var(--border-in-light);
   position: relative;
   transition: width ease 0.05s;
 
@@ -99,6 +99,12 @@
   height: 100%;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  background: radial-gradient(
+    ellipse at top right,
+    var(--second),
+    transparent 65%
+  );
 }
 
 .mobile {
