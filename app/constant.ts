@@ -478,7 +478,11 @@ export const DEFAULT_TTS_VOICES = [
   "shimmer",
 ];
 
+// Match the whole GPT-6 conversation family, including minor versions/snapshots.
+export const GPT6_MODEL_REGEX = /^gpt-6(?:[.-]|$)/i;
+
 export const VISION_MODEL_REGEXES = [
+  GPT6_MODEL_REGEX,
   /vision/,
   /gpt-4o/,
   /gpt-4\.1/,

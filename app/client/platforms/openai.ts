@@ -3,6 +3,7 @@
 import {
   ApiPath,
   DEFAULT_MODELS,
+  GPT6_MODEL_REGEX,
   OpenaiPath,
   REQUEST_TIMEOUT_MS,
 } from "@/app/constant";
@@ -154,6 +155,7 @@ export class ChatGPTApi implements LLMApi {
       options.config.model.startsWith("o3") ||
       options.config.model.startsWith("o4-mini");
     const isGpt5 = options.config.model.startsWith("gpt-5");
+    const isGpt6 = GPT6_MODEL_REGEX.test(options.config.model);
     if (isDalle3) {
       const prompt = getMessageTextContent(
         options.messages.slice(-1)?.pop() as any,
@@ -210,8 +212,9 @@ export class ChatGPTApi implements LLMApi {
         requestPayload["max_completion_tokens"] = modelConfig.max_tokens;
       }
 
-      // add max_tokens to vision model
-      if (visionModel && !isO1OrO3 && !isGpt5) {
+      // Legacy vision models need this fallback. Recognizing GPT-6 image input
+      // must not introduce the legacy max_tokens field into its existing payload.
+      if (visionModel && !isO1OrO3 && !isGpt5 && !isGpt6) {
         requestPayload["max_tokens"] = Math.max(modelConfig.max_tokens, 4000);
       }
     }
