@@ -3,6 +3,7 @@ import { DalleQuality, DalleStyle, ModelSize } from "../typing";
 import { getClientConfig } from "../config/client";
 import {
   DEFAULT_INPUT_TEMPLATE,
+  DEFAULT_CHAT_MODEL,
   DEFAULT_MODELS,
   DEFAULT_SIDEBAR_WIDTH,
   DEFAULT_TTS_ENGINE,
@@ -15,6 +16,7 @@ import {
   ServiceProvider,
 } from "../constant";
 import { createPersistStore } from "../utils/store";
+import { getModelProvider } from "../utils/model";
 import type { Voice } from "rt-client";
 
 export type ModelType = (typeof DEFAULT_MODELS)[number]["name"];
@@ -62,9 +64,11 @@ export const DEFAULT_CONFIG = {
 
   customModels: "",
   models: DEFAULT_MODELS as any as LLMModel[],
+  defaultModelSource: "automatic" as "automatic" | "custom",
+  lastAppliedDefaultModel: DEFAULT_CHAT_MODEL as string,
 
   modelConfig: {
-    model: "gpt-4o-mini" as ModelType,
+    model: DEFAULT_CHAT_MODEL as ModelType,
     providerName: "OpenAI" as ServiceProvider,
     temperature: 0.5,
     top_p: 1,
@@ -162,10 +166,56 @@ export const ModalConfigValidator = {
 };
 
 export const useAppConfig = createPersistStore(
-  { ...DEFAULT_CONFIG },
+  { ...DEFAULT_CONFIG, modelConfig: { ...DEFAULT_CONFIG.modelConfig } },
   (set, get) => ({
     reset() {
-      set(() => ({ ...DEFAULT_CONFIG }));
+      set(() => ({
+        ...DEFAULT_CONFIG,
+        modelConfig: { ...DEFAULT_CONFIG.modelConfig },
+      }));
+    },
+
+    setDefaultModel(model: string) {
+      if (!model.trim()) return;
+      set({
+        defaultModelSource: "custom",
+        modelConfig: {
+          ...get().modelConfig,
+          model,
+          providerName: ServiceProvider.OpenAI,
+        },
+        lastUpdateTime: Date.now(),
+      });
+    },
+
+    applyServerDefault(defaultModel: string) {
+      const [model] = getModelProvider(
+        defaultModel.trim() || DEFAULT_CHAT_MODEL,
+      );
+      const current = get();
+      const followDefault =
+        current.defaultModelSource === "automatic" &&
+        current.modelConfig.model === current.lastAppliedDefaultModel;
+      // Keep reset() aligned with the administrator's default, not the old build.
+      DEFAULT_CONFIG.modelConfig = {
+        ...DEFAULT_CONFIG.modelConfig,
+        model,
+        providerName: ServiceProvider.OpenAI,
+      };
+      DEFAULT_CONFIG.lastAppliedDefaultModel = model;
+      if (followDefault) {
+        set({
+          modelConfig: {
+            ...current.modelConfig,
+            model,
+            providerName: ServiceProvider.OpenAI,
+          },
+          lastAppliedDefaultModel: model,
+        });
+      } else if (current.defaultModelSource === "automatic") {
+        // A previously imported/customized global model is an intentional choice.
+        set({ defaultModelSource: "custom" });
+      }
     },
 
     mergeModels(newModels: LLMModel[]) {
@@ -177,13 +227,17 @@ export const useAppConfig = createPersistStore(
       const modelMap: Record<string, LLMModel> = {};
 
       for (const model of oldModels) {
-        model.available = false;
-        modelMap[`${model.name}@${model?.provider?.id}`] = model;
+        modelMap[`${model.name}@${model?.provider?.id}`] = {
+          ...model,
+          available: false,
+        };
       }
 
       for (const model of newModels) {
-        model.available = true;
-        modelMap[`${model.name}@${model?.provider?.id}`] = model;
+        modelMap[`${model.name}@${model?.provider?.id}`] = {
+          ...model,
+          available: true,
+        };
       }
 
       set(() => ({
@@ -195,20 +249,26 @@ export const useAppConfig = createPersistStore(
   }),
   {
     name: StoreKey.Config,
-    version: 4.1,
+    version: 4.2,
 
     merge(persistedState, currentState) {
       const state = persistedState as ChatConfig | undefined;
       if (!state) return { ...currentState };
       const models = currentState.models.slice();
-      state.models.forEach((pModel) => {
+      (state.models ?? []).forEach((pModel) => {
         const idx = models.findIndex(
-          (v) => v.name === pModel.name && v.provider === pModel.provider,
+          (v) =>
+            v.name === pModel.name && v.provider?.id === pModel.provider?.id,
         );
         if (idx !== -1) models[idx] = pModel;
         else models.push(pModel);
       });
-      return { ...currentState, ...state, models: models };
+      return {
+        ...currentState,
+        ...state,
+        modelConfig: { ...currentState.modelConfig, ...state.modelConfig },
+        models,
+      };
     },
 
     migrate(persistedState, version) {
@@ -253,6 +313,21 @@ export const useAppConfig = createPersistStore(
           DEFAULT_CONFIG.modelConfig.compressModel;
         state.modelConfig.compressProviderName =
           DEFAULT_CONFIG.modelConfig.compressProviderName;
+      }
+
+      if (version < 4.2) {
+        // Old versions did not record whether gpt-4o-mini was manually chosen.
+        // Upgrade that legacy global default once; per-chat custom models remain.
+        const wasLegacyDefault =
+          state.modelConfig.model === "gpt-4o-mini" &&
+          (!state.modelConfig.providerName ||
+            state.modelConfig.providerName === ServiceProvider.OpenAI);
+        state.defaultModelSource = wasLegacyDefault ? "automatic" : "custom";
+        state.lastAppliedDefaultModel = DEFAULT_CHAT_MODEL;
+        if (wasLegacyDefault) {
+          state.modelConfig.model = DEFAULT_CHAT_MODEL;
+          state.modelConfig.providerName = ServiceProvider.OpenAI;
+        }
       }
 
       return state as any;

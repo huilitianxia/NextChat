@@ -128,7 +128,11 @@ function Screen() {
   const shouldTightBorder =
     getClientConfig()?.isApp || (config.tightBorder && !isMobileScreen);
 
-  if (!access._hasHydrated || (!access.configReady && !isAuth)) {
+  if (
+    !config._hasHydrated ||
+    !access._hasHydrated ||
+    (!access.configReady && !isAuth)
+  ) {
     return <Loading />;
   }
   if (!isAuth && !access.isAuthorized()) {
@@ -203,10 +207,11 @@ export function Home() {
   useLoadData();
   useHtmlLang();
   const accessHydrated = useAccessStore((state) => state._hasHydrated);
+  const configHydrated = useAppConfig((state) => state._hasHydrated);
 
   useEffect(() => {
-    if (accessHydrated) useAccessStore.getState().fetch();
-  }, [accessHydrated]);
+    if (accessHydrated && configHydrated) useAccessStore.getState().fetch();
+  }, [accessHydrated, configHydrated]);
 
   if (!useHasHydrated()) {
     return <Loading />;

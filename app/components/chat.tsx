@@ -476,20 +476,6 @@ export function ChatActions(props: {
   const currentModel = session.mask.modelConfig.model;
   const [showModelSelector, setShowModelSelector] = useState(false);
 
-  useEffect(() => {
-    if (
-      models.length &&
-      (!models.some((m) => m.name === currentModel) ||
-        session.mask.modelConfig.providerName !== ServiceProvider.OpenAI)
-    ) {
-      const next = models.find((m) => m.isDefault) ?? models[0];
-      chatStore.updateTargetSession(session, (target) => {
-        target.mask.modelConfig.model = next.name;
-        target.mask.modelConfig.providerName = ServiceProvider.OpenAI;
-      });
-    }
-  }, [chatStore, session, currentModel, models]);
-
   return (
     <div className={styles["chat-input-actions"]}>
       <IconButton
@@ -524,6 +510,7 @@ export function ChatActions(props: {
       )}
       {showModelSelector && (
         <Selector
+          title="切换模型"
           defaultSelectedValue={currentModel}
           items={models.map((m) => ({
             title: m.displayName || m.name,

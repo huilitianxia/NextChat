@@ -144,12 +144,7 @@ export function Settings() {
             id="friend-default-model"
             value={config.modelConfig.model}
             disabled={!models.length}
-            onChange={(event) =>
-              config.update((state) => {
-                state.modelConfig.model = event.target.value;
-                state.modelConfig.providerName = ServiceProvider.OpenAI;
-              })
-            }
+            onChange={(event) => config.setDefaultModel(event.target.value)}
           >
             {!models.some(
               (model) => model.name === config.modelConfig.model,

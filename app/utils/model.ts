@@ -140,11 +140,44 @@ export function collectModelTableWithDefaultModel(
   customModels: string,
   defaultModel: string,
 ) {
-  let modelTable = collectModelTable(models, customModels);
+  let configuredModels = models;
+  const [defaultName, defaultProvider] = getModelProvider(defaultModel);
+  const providerId = (defaultProvider || "openai").toLowerCase();
+  if (defaultName) {
+    const existing = models.find(
+      (model) =>
+        model.name === defaultName && model.provider?.id === providerId,
+    );
+    // /models is advisory. Keep an explicitly configured default selectable even
+    // when discovery omits it, then apply the administrator's allow/deny rules.
+    configuredModels = existing
+      ? models.map((model) =>
+          model === existing ? { ...model, available: true } : model,
+        )
+      : [
+          ...models,
+          {
+            name: defaultName,
+            available: true,
+            sorted: -1001,
+            provider: {
+              id: providerId,
+              providerName:
+                providerId === "openai"
+                  ? ServiceProvider.OpenAI
+                  : defaultProvider!,
+              providerType: "custom",
+              sorted: 1,
+            },
+          },
+        ];
+  }
+  let modelTable = collectModelTable(configuredModels, customModels);
   if (defaultModel && defaultModel !== "") {
     if (defaultModel.includes("@")) {
-      if (defaultModel in modelTable) {
-        modelTable[defaultModel].isDefault = true;
+      const key = `${defaultName}@${providerId}`;
+      if (key in modelTable) {
+        modelTable[key].isDefault = true;
       }
     } else {
       for (const key of Object.keys(modelTable)) {

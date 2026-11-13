@@ -1,6 +1,6 @@
 import "server-only";
 import { getFriendAccessConfig } from "./friend-profiles";
-import { DEFAULT_MODELS, DEFAULT_GA_ID } from "../constant";
+import { DEFAULT_MODELS, DEFAULT_GA_ID, DEFAULT_CHAT_MODEL } from "../constant";
 import { isGPT4Model } from "../utils/model";
 
 declare global {
@@ -120,7 +120,7 @@ export const getServerSideConfig = () => {
 
   const disableGPT4 = !!process.env.DISABLE_GPT4;
   let customModels = process.env.CUSTOM_MODELS ?? "";
-  let defaultModel = process.env.DEFAULT_MODEL ?? "";
+  let defaultModel = process.env.DEFAULT_MODEL?.trim() || DEFAULT_CHAT_MODEL;
   let visionModels = process.env.VISION_MODELS ?? "";
 
   if (disableGPT4) {
@@ -129,7 +129,7 @@ export const getServerSideConfig = () => {
       .map((m) => "-" + m.name)
       .join(",");
     if (defaultModel && isGPT4Model(defaultModel)) {
-      defaultModel = "";
+      defaultModel = DEFAULT_CHAT_MODEL;
     }
   }
 

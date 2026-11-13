@@ -13,6 +13,7 @@ import MinIcon from "../icons/min.svg";
 import Locale from "../locales";
 
 import { createRoot } from "react-dom/client";
+import { createPortal } from "react-dom";
 import React, {
   CSSProperties,
   HTMLProps,
@@ -21,6 +22,7 @@ import React, {
   useState,
   useCallback,
   useRef,
+  useId,
 } from "react";
 import { IconButton } from "./button";
 import { Avatar } from "./emoji";
@@ -475,6 +477,7 @@ export function showImageModal(
 }
 
 export function Selector<T>(props: {
+  title?: string;
   items: Array<{
     title: string;
     subTitle?: string;
@@ -493,63 +496,160 @@ export function Selector<T>(props: {
       ? [props.defaultSelectedValue]
       : [],
   );
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const title = props.title ?? "选择选项";
 
-  const handleSelection = (e: MouseEvent, value: T) => {
-    if (props.multiple) {
-      e.stopPropagation();
-      const newSelectedValues = selectedValues.includes(value)
+  // Client-only mount keeps SSR safe. The overlay must escape the composer's
+  // backdrop-filter containing block and the chat window's overflow clipping.
+  useEffect(() => {
+    setPortalTarget(document.body);
+  }, []);
+
+  useEffect(() => {
+    if (!portalTarget) return;
+    const opener = document.activeElement as HTMLElement | null;
+    const content = contentRef.current;
+    const first = content?.querySelector<HTMLElement>(
+      '[aria-selected="true"]:not([disabled]), [role="option"]:not([disabled])',
+    );
+    (
+      content?.querySelector<HTMLElement>(
+        '[aria-selected="true"]:not([disabled])',
+      ) ??
+      first ??
+      content
+    )?.focus();
+    return () => {
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    };
+  }, [portalTarget]);
+
+  const handleSelection = (value: T) => {
+    const selection = props.multiple
+      ? selectedValues.includes(value)
         ? selectedValues.filter((v) => v !== value)
-        : [...selectedValues, value];
-      setSelectedValues(newSelectedValues);
-      props.onSelection?.(newSelectedValues);
-    } else {
-      setSelectedValues([value]);
-      props.onSelection?.([value]);
+        : [...selectedValues, value]
+      : [value];
+    setSelectedValues(selection);
+    props.onSelection?.(selection);
+    if (!props.multiple) props.onClose?.();
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      event.preventDefault();
       props.onClose?.();
+      return;
+    }
+    const content = contentRef.current;
+    if (!content) return;
+    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      const options = Array.from(
+        content.querySelectorAll<HTMLElement>(
+          '[role="option"]:not([disabled])',
+        ),
+      );
+      if (!options.length) return;
+      event.preventDefault();
+      const index = options.indexOf(document.activeElement as HTMLElement);
+      const next =
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+          ? options.length - 1
+          : (index + (event.key === "ArrowUp" ? -1 : 1) + options.length) %
+            options.length;
+      options[next].focus();
+      options[next].scrollIntoView?.({ block: "nearest" });
+    } else if (event.key === "Tab") {
+      const buttons = Array.from(
+        content.querySelectorAll<HTMLButtonElement>("button:not([disabled])"),
+      );
+      const first = buttons[0],
+        last = buttons.at(-1);
+      if (
+        event.shiftKey &&
+        (document.activeElement === first || document.activeElement === content)
+      ) {
+        event.preventDefault();
+        last?.focus();
+      } else if (
+        !event.shiftKey &&
+        (document.activeElement === last || document.activeElement === content)
+      ) {
+        event.preventDefault();
+        first?.focus();
+      }
     }
   };
 
-  return (
-    <div className={styles["selector"]} onClick={() => props.onClose?.()}>
-      <div className={styles["selector-content"]}>
-        <List>
-          {props.items.map((item, i) => {
-            const selected = selectedValues.includes(item.value);
-            return (
-              <ListItem
-                className={clsx(styles["selector-item"], {
-                  [styles["selector-item-disabled"]]: item.disable,
-                })}
-                key={i}
-                title={item.title}
-                subTitle={item.subTitle}
-                icon={<Avatar model={item.value as string} />}
-                onClick={(e) => {
-                  if (item.disable) {
-                    e.stopPropagation();
-                  } else {
-                    handleSelection(e, item.value);
-                  }
-                }}
-              >
-                {selected ? (
-                  <div
-                    style={{
-                      height: 10,
-                      width: 10,
-                      backgroundColor: "var(--primary)",
-                      borderRadius: 10,
-                    }}
-                  ></div>
-                ) : (
-                  <></>
-                )}
-              </ListItem>
-            );
-          })}
-        </List>
+  if (!portalTarget) return null;
+  return createPortal(
+    <div
+      className={styles["selector"]}
+      data-selector-overlay
+      onClick={(event) => {
+        event.stopPropagation();
+        if (event.target === event.currentTarget) props.onClose?.();
+      }}
+      onKeyDown={onKeyDown}
+    >
+      <div
+        className={styles["selector-content"]}
+        ref={contentRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+      >
+        <div className={styles["selector-header"]}>
+          <h2 id={titleId}>{title}</h2>
+          <IconButton
+            icon={<CloseIcon />}
+            aria="关闭选择列表"
+            onClick={props.onClose}
+          />
+        </div>
+        <div
+          className={styles["selector-list"]}
+          role="listbox"
+          aria-label={title}
+          aria-multiselectable={props.multiple || undefined}
+        >
+          {props.items.map((item, i) => (
+            <button
+              type="button"
+              role="option"
+              key={i}
+              className={styles["selector-item"]}
+              disabled={item.disable}
+              aria-selected={selectedValues.includes(item.value)}
+              onClick={() => handleSelection(item.value)}
+            >
+              <span className={styles["selector-icon"]} aria-hidden="true">
+                <Avatar model={item.value as string} />
+              </span>
+              <span className={styles["selector-label"]}>
+                <span>{item.title}</span>
+                {item.subTitle && <small>{item.subTitle}</small>}
+              </span>
+              {selectedValues.includes(item.value) && (
+                <span className={styles["selector-check"]} aria-hidden="true">
+                  ✓
+                </span>
+              )}
+            </button>
+          ))}
+          {props.items.length === 0 && (
+            <p className={styles["selector-empty"]}>暂无可选项</p>
+          )}
+        </div>
       </div>
-    </div>
+    </div>,
+    portalTarget,
   );
 }
 export function FullScreen(props: any) {

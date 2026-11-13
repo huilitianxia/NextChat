@@ -1,5 +1,6 @@
 import {
   GoogleSafetySettingsThreshold,
+  DEFAULT_CHAT_MODEL,
   ServiceProvider,
   StoreKey,
   ApiPath,
@@ -22,8 +23,7 @@ import {
 import type { FriendProfile } from "../config/friend-profiles";
 import { getClientConfig } from "../config/client";
 import { createPersistStore } from "../utils/store";
-import { DEFAULT_CONFIG } from "./config";
-import { getModelProvider } from "../utils/model";
+import { useAppConfig } from "./config";
 
 let fetchState = 0; // 0 not fetched, 1 fetching, 2 done
 let verificationVersion = 0;
@@ -290,15 +290,13 @@ export const useAccessStore = createPersistStore(
             hideBalanceQuery: true,
             disableFastLink: true,
             customModels: res.customModels ?? "",
-            defaultModel: res.defaultModel ?? "",
+            defaultModel: res.defaultModel?.trim() || DEFAULT_CHAT_MODEL,
             visionModels: res.visionModels ?? "",
             disableGPT4: !!res.disableGPT4,
           });
-          if (res.defaultModel) {
-            const [model] = getModelProvider(res.defaultModel);
-            DEFAULT_CONFIG.modelConfig.model = model;
-            DEFAULT_CONFIG.modelConfig.providerName = ServiceProvider.OpenAI;
-          }
+          useAppConfig
+            .getState()
+            .applyServerDefault(res.defaultModel?.trim() || DEFAULT_CHAT_MODEL);
           // Revalidate on reload; local profile data never grants server access.
           if (get().accessCode || !get().needCode) {
             try {
