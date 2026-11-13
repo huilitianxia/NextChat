@@ -28,6 +28,9 @@ test("fresh settings and new chats use the requested exact model ID", () => {
   expect(DEFAULT_CHAT_MODEL).toBe("gpt-6.1-sol");
   expect(useAppConfig.getState().modelConfig.model).toBe(DEFAULT_CHAT_MODEL);
   expect(createEmptyMask().modelConfig.model).toBe(DEFAULT_CHAT_MODEL);
+  expect(DEFAULT_CONFIG.modelConfig.temperature).toBe(1);
+  expect(useAppConfig.getState().modelConfig.temperature).toBe(1);
+  expect(createEmptyMask().modelConfig.temperature).toBe(1);
 });
 
 test("legacy global mini default migrates once without losing other preferences", async () => {

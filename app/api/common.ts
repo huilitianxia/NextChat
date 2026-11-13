@@ -43,13 +43,6 @@ export async function requestOpenai(req: NextRequest) {
   console.log("[Proxy] ", path);
   console.log("[Base Url]", baseUrl);
 
-  const timeoutId = setTimeout(
-    () => {
-      controller.abort();
-    },
-    10 * 60 * 1000,
-  );
-
   if (isAzure) {
     const azureApiVersion =
       req?.nextUrl?.searchParams?.get("api-version") ||
@@ -108,16 +101,31 @@ export async function requestOpenai(req: NextRequest) {
     signal: controller.signal,
   };
 
-  // #1815 try to refuse gpt4 request
-  if (serverConfig.customModels && req.body) {
+  // Read once, even without CUSTOM_MODELS: old browser state may still send
+  // unsupported sampling values. Forward the buffered body, never a spent stream.
+  if (req.body) {
+    const rawBody = await req.text();
+    fetchOptions.body = rawBody;
     try {
-      const clonedBody = await req.text();
-      fetchOptions.body = clonedBody;
+      const jsonBody = JSON.parse(rawBody) as {
+        model?: string;
+        temperature?: unknown;
+      } | null;
 
-      const jsonBody = JSON.parse(clonedBody) as { model?: string };
+      // Let GPT-6 use its default temperature regardless of client-side caches.
+      // Require a family boundary so unrelated IDs such as gpt-60 stay untouched.
+      if (
+        typeof jsonBody?.model === "string" &&
+        /^gpt-6(?:[.-]|$)/i.test(jsonBody.model.trim()) &&
+        Object.prototype.hasOwnProperty.call(jsonBody, "temperature")
+      ) {
+        delete jsonBody.temperature;
+        fetchOptions.body = JSON.stringify(jsonBody);
+      }
 
       // not undefined and is false
       if (
+        serverConfig.customModels &&
         isModelNotavailableInServer(
           serverConfig.customModels,
           jsonBody?.model as string,
@@ -138,11 +146,13 @@ export async function requestOpenai(req: NextRequest) {
           },
         );
       }
-    } catch (e) {
-      console.error("[OpenAI] gpt4 filter", e);
+    } catch {
+      // Preserve upstream validation for malformed JSON without logging prompts.
+      console.warn("[OpenAI] could not parse request JSON");
     }
   }
 
+  const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000);
   try {
     const res = await fetch(fetchUrl, fetchOptions);
 

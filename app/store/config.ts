@@ -70,7 +70,7 @@ export const DEFAULT_CONFIG = {
   modelConfig: {
     model: DEFAULT_CHAT_MODEL as ModelType,
     providerName: "OpenAI" as ServiceProvider,
-    temperature: 0.5,
+    temperature: 1,
     top_p: 1,
     max_tokens: 4000,
     presence_penalty: 0,
