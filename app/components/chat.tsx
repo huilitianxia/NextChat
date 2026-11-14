@@ -1534,7 +1534,15 @@ function _Chat() {
                 setAutoScroll(false);
               }}
             >
-              {session.messages.length === 0 && <WelcomeCard compact />}
+              {session.messages.length === 0 && (
+                <WelcomeCard
+                  compact
+                  onPromptSelect={(prompt) => {
+                    onInput(prompt);
+                    inputRef.current?.focus();
+                  }}
+                />
+              )}
               {messages
                 // TODO
                 // .filter((m) => !m.isMcpResponse)

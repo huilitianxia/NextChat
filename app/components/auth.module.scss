@@ -102,7 +102,7 @@
   }
 }
 .error {
-  color: #d34b46;
+  color: var(--error-color);
   text-align: left;
   font-size: 13px;
   line-height: 1.7;

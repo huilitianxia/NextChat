@@ -1,17 +1,31 @@
 .icon-button {
   background-color: var(--white);
-  border-radius: 10px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 10px;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition:
+    background-color 180ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease,
+    transform 180ms ease;
   overflow: hidden;
   user-select: none;
-  outline: none;
   border: none;
   color: var(--black);
+
+  &:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 3px;
+  }
+
+  &:hover:not([disabled]) {
+    filter: none;
+    background-color: var(--hover-color);
+    box-shadow: var(--shadow-soft);
+  }
 
   &[disabled] {
     cursor: not-allowed;
@@ -21,6 +35,13 @@
   &.primary {
     background-color: var(--primary);
     color: var(--on-primary, white);
+    box-shadow:
+      0 2px 4px #00000008,
+      0 5px 16px color-mix(in srgb, var(--primary) 16%, transparent);
+
+    &:hover:not([disabled]) {
+      background-color: color-mix(in srgb, var(--primary) 92%, var(--black));
+    }
 
     path {
       fill: var(--on-primary, white) !important;
@@ -45,6 +66,15 @@
   &:hover,
   &:focus {
     border-color: var(--primary);
+  }
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .icon-button:hover:not([disabled]) {
+    transform: translateY(-1px);
+  }
+  .icon-button:active:not([disabled]) {
+    transform: translateY(0);
   }
 }
 

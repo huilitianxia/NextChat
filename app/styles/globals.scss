@@ -6,43 +6,64 @@
 
   /* color */
   --white: #ffffff;
-  --black: #263438;
-  --gray: #f2f5f4;
-  --primary: #28736a;
+  --black: #20343c;
+  --gray: #f1f5f5;
+  --primary: #246f67;
   --on-primary: #fff;
-  --second: #eaf2ef;
-  --hover-color: #eff4f2;
-  --glass: rgba(255, 255, 255, 0.78);
-  --muted: #62726e;
+  --second: #eaf3f0;
+  --hover-color: #edf4f2;
+  --glass: rgba(251, 253, 252, 0.88);
+  --muted: #5b7078;
+  --surface-raised: #ffffff;
+  --surface-soft: #f5f8f8;
+  --text-secondary: #566b73;
+  --line: rgba(49, 81, 86, 0.12);
+  --line-strong: rgba(49, 81, 86, 0.24);
+  --shadow-soft: 0 2px 5px rgba(28, 61, 64, 0.025),
+    0 10px 28px rgba(28, 61, 64, 0.045);
+  --shadow-lift: 0 4px 10px rgba(28, 61, 64, 0.04),
+    0 16px 40px rgba(28, 61, 64, 0.08);
+  --error-color: #a83f36;
   --bar-color: rgba(0, 0, 0, 0.1);
   --theme-color: var(--gray);
 
   /* shadow */
-  --shadow: 0 24px 90px -30px rgba(30, 60, 50, 0.18);
-  --card-shadow: 0px 2px 4px 0px rgb(0, 0, 0, 0.05);
+  --shadow: 0 1px 2px #193e4510, 0 24px 80px -24px #193e4524,
+    0 0 0 6px #ffffff38;
+  --card-shadow: var(--shadow-soft);
 
   /* stroke */
-  --border-in-light: 1px solid rgba(65, 97, 84, 0.14);
+  --border-in-light: 1px solid var(--line);
 }
 
 @mixin dark {
   --theme: dark;
 
   /* color */
-  --white: #192320;
-  --black: #e3ebe7;
-  --gray: #111916;
-  --primary: #8ccdb9;
-  --on-primary: #11251d;
-  --second: #22342e;
-  --hover-color: #2b3c34;
-  --glass: rgba(25, 35, 32, 0.8);
-  --muted: #a3b6ad;
-  --shadow: 0 24px 90px -30px rgba(0, 0, 0, 0.6);
+  --white: #17252e;
+  --black: #e7f1f3;
+  --gray: #101a23;
+  --primary: #9ad9c9;
+  --on-primary: #132d2b;
+  --second: #203a3d;
+  --hover-color: #283d48;
+  --glass: rgba(22, 35, 45, 0.92);
+  --muted: #a5bac3;
+  --surface-raised: #1c2d37;
+  --surface-soft: #14232c;
+  --text-secondary: #b0c3cc;
+  --line: rgba(166, 204, 216, 0.13);
+  --line-strong: rgba(166, 204, 216, 0.28);
+  --shadow-soft: 0 2px 6px #00000012, 0 10px 28px #0000001c;
+  --shadow-lift: 0 6px 18px #00000024, 0 20px 42px #00000038;
+  --card-shadow: var(--shadow-soft);
+  --error-color: #ffaaa3;
+  --shadow: 0 1px 1px #c7f1ff0a, 0 28px 85px -18px #00000080,
+    0 0 0 6px #c7f1ff03;
 
   --bar-color: rgba(255, 255, 255, 0.1);
 
-  --border-in-light: 1px solid rgba(255, 255, 255, 0.192);
+  --border-in-light: 1px solid var(--line);
 
   --theme-color: var(--gray);
 
@@ -103,6 +124,16 @@ html {
 
 body {
   background-color: var(--gray);
+  background-image: radial-gradient(
+      ellipse at 8% 4%,
+      color-mix(in srgb, var(--primary) 9%, transparent),
+      transparent 52%
+    ),
+    radial-gradient(
+      ellipse at 92% 96%,
+      color-mix(in srgb, var(--primary) 6%, transparent),
+      transparent 50%
+    );
   color: var(--black);
   margin: 0;
   padding: 0;
@@ -114,6 +145,7 @@ body {
   user-select: none;
   touch-action: pan-x pan-y;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
 
   @media only screen and (max-width: 600px) {
     background-color: var(--second);
@@ -416,4 +448,15 @@ pre {
 
 .copyable {
   user-select: text;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -11,6 +11,8 @@ import mermaid from "mermaid";
 import Locale from "../locales";
 import LoadingIcon from "../icons/three-dots.svg";
 import ReloadButtonIcon from "../icons/reload.svg";
+import CopyIcon from "../icons/copy.svg";
+import ConfirmIcon from "../icons/confirm.svg";
 import React from "react";
 import { useDebouncedCallback } from "use-debounce";
 import { showImageModal, FullScreen } from "./ui-lib";
@@ -76,26 +78,65 @@ export function PreCode(props: { children: any }) {
   const previewRef = useRef<HTMLPreviewHandler>(null);
   const [mermaidCode, setMermaidCode] = useState("");
   const [htmlCode, setHtmlCode] = useState("");
+  const [copied, setCopied] = useState(false);
   const { height } = useWindowSize();
   const chatStore = useChatStore();
   const session = chatStore.currentSession();
+  const language = useMemo(() => {
+    const code = React.Children.toArray(props.children).find((child) =>
+      React.isValidElement<{ className?: string }>(child),
+    );
+    const className = React.isValidElement<{ className?: string }>(code)
+      ? code.props.className ?? ""
+      : "";
+    const name = className.match(/(?:^|\s)language-([^\s]+)/)?.[1] ?? "";
+    const labels: Record<string, string> = {
+      js: "JavaScript",
+      javascript: "JavaScript",
+      ts: "TypeScript",
+      typescript: "TypeScript",
+      jsx: "JSX",
+      tsx: "TSX",
+      python: "Python",
+      py: "Python",
+      html: "HTML",
+      css: "CSS",
+      json: "JSON",
+      xml: "XML",
+      sql: "SQL",
+      bash: "Bash",
+      sh: "Shell",
+      shell: "Shell",
+      md: "Markdown",
+      markdown: "Markdown",
+      mermaid: "Mermaid",
+      cpp: "C++",
+      "c++": "C++",
+      cs: "C#",
+      "c#": "C#",
+      txt: "纯文本",
+      text: "纯文本",
+      plaintext: "纯文本",
+    };
+    return labels[name.toLowerCase()] ?? (name || "纯文本");
+  }, [props.children]);
 
   const renderArtifacts = useDebouncedCallback(() => {
     if (!ref.current) return;
     const mermaidDom = ref.current.querySelector("code.language-mermaid");
-    if (mermaidDom) {
-      setMermaidCode((mermaidDom as HTMLElement).innerText);
-    }
+    setMermaidCode(mermaidDom?.textContent ?? "");
     const htmlDom = ref.current.querySelector("code.language-html");
-    const refText = ref.current.querySelector("code")?.innerText;
+    const refText = ref.current.querySelector("code")?.textContent;
     if (htmlDom) {
-      setHtmlCode((htmlDom as HTMLElement).innerText);
+      setHtmlCode(htmlDom.textContent ?? "");
     } else if (
       refText?.startsWith("<!DOCTYPE") ||
       refText?.startsWith("<svg") ||
       refText?.startsWith("<?xml")
     ) {
       setHtmlCode(refText);
+    } else {
+      setHtmlCode("");
     }
   }, 600);
 
@@ -120,35 +161,54 @@ export function PreCode(props: { children: any }) {
         "latex",
       ];
       codeElements.forEach((codeElement) => {
-        let languageClass = codeElement.className.match(/language-(\w+)/);
+        let languageClass = codeElement.className.match(/language-([^\s]+)/);
         let name = languageClass ? languageClass[1] : "";
         if (wrapLanguages.includes(name)) {
           codeElement.style.whiteSpace = "pre-wrap";
         }
       });
-      setTimeout(renderArtifacts, 1);
+      renderArtifacts();
     }
-  }, []);
+    setCopied(false);
+    return () => renderArtifacts.cancel();
+  }, [props.children, renderArtifacts]);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(timer);
+  }, [copied]);
 
   return (
     <>
-      <pre ref={ref}>
-        <button
-          type="button"
-          aria-label="复制代码"
-          className="copy-code-button"
-          onClick={() => {
-            if (ref.current) {
-              copyToClipboard(
-                ref.current.querySelector("code")?.innerText ?? "",
-              );
-            }
-          }}
-        >
-          复制代码
-        </button>
-        {props.children}
-      </pre>
+      <div className="code-block">
+        <div className="code-block-header">
+          <span className="code-block-language">{language}</span>
+          <button
+            type="button"
+            aria-label={copied ? "已复制" : "复制代码"}
+            className="copy-code-button"
+            onClick={async () => {
+              const code =
+                ref.current?.querySelector("code")?.textContent ?? "";
+              const success = await copyToClipboard(code);
+              if (
+                success &&
+                ref.current?.querySelector("code")?.textContent === code
+              )
+                setCopied(true);
+            }}
+          >
+            {copied ? (
+              <ConfirmIcon className="code-copied-icon" aria-hidden="true" />
+            ) : (
+              <CopyIcon className="code-copy-icon" aria-hidden="true" />
+            )}
+            <span aria-live="polite">{copied ? "已复制" : "复制代码"}</span>
+          </button>
+        </div>
+        <pre ref={ref}>{props.children}</pre>
+      </div>
       {mermaidCode.length > 0 && (
         <Mermaid code={mermaidCode} key={mermaidCode} />
       )}
