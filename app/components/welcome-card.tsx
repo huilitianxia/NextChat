@@ -122,7 +122,9 @@ export function WelcomeCard(props: {
           <div>
             <span aria-hidden="true">↥</span>
             <strong>把灵感拖进来</strong>
-            <p>图片、PDF、代码文件</p>
+            <p title="文本：.txt / .md / .csv / .json / .log；Word：.docx / 文本型 .doc">
+              图片、PDF、Word、文本与代码
+            </p>
           </div>
           <div>
             <span aria-hidden="true">⧉</span>

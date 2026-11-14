@@ -482,7 +482,8 @@ export function ChatActions(props: {
       <IconButton
         icon={props.uploading ? <LoadingButtonIcon /> : <ImageIcon />}
         text={props.uploading ? "正在读取…" : "添加文件"}
-        aria="添加图片、PDF 或代码文件"
+        aria="添加图片、PDF、Word 或文本文件"
+        title="支持 .txt、.md、.csv、.json、.log、.docx、文本型 .doc，以及图片、PDF 和代码文件"
         onClick={props.uploadImage}
         disabled={props.uploading}
       />
@@ -1854,7 +1855,7 @@ function _Chat() {
             >
               {dragging && (
                 <div className={styles["drop-overlay"]} role="status">
-                  松开即可添加图片、PDF 或代码文件
+                  松开即可添加图片、PDF、Word、文本或代码文件
                 </div>
               )}
               {attachmentError && (
@@ -1932,7 +1933,7 @@ function _Chat() {
                   id="chat-input"
                   ref={inputRef}
                   className={styles["chat-input"]}
-                  placeholder="写下你的问题，或将图片、PDF、代码文件拖到这里…"
+                  placeholder="写下你的问题，或拖入图片、PDF、Word、文本与代码文件…"
                   aria-label="消息输入框"
                   onInput={(e) => onInput(e.currentTarget.value)}
                   value={userInput}

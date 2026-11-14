@@ -85,7 +85,7 @@ test("personalized greeting is rendered as text and the card has usable feature 
   ).toBeVisible();
   expect(screen.getByText("<script>never execute</script>")).toBeVisible();
   expect(container.querySelector("script")).toBeNull();
-  expect(screen.getByText("图片、PDF、代码文件")).toBeVisible();
+  expect(screen.getByText("图片、PDF、Word、文本与代码")).toBeVisible();
   expect(screen.getByText("回复与代码，一键复制")).toBeVisible();
   expect(
     screen.queryByRole("region", { name: "灵感起点" }),
