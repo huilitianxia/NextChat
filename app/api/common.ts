@@ -5,6 +5,11 @@ import { cloudflareAIGatewayUrl } from "../utils/cloudflare";
 import { getModelProvider, isModelNotavailableInServer } from "../utils/model";
 
 const serverConfig = getServerSideConfig();
+import {
+  fetchWithEffortFallback,
+  isReasoningModel,
+  normalizeEffort,
+} from "../utils/reasoning";
 
 export async function requestOpenai(req: NextRequest) {
   const controller = new AbortController();
@@ -102,6 +107,7 @@ export async function requestOpenai(req: NextRequest) {
   };
 
   // Read once, even without CUSTOM_MODELS: old browser state may still send
+  let reasoningBody: Record<string, any> | undefined;
   // unsupported sampling values. Forward the buffered body, never a spent stream.
   if (req.body) {
     const rawBody = await req.text();
@@ -110,7 +116,17 @@ export async function requestOpenai(req: NextRequest) {
       const jsonBody = JSON.parse(rawBody) as {
         model?: string;
         temperature?: unknown;
+        reasoning_effort?: unknown;
       } | null;
+      if (
+        jsonBody &&
+        isReasoningModel(jsonBody.model || "") &&
+        jsonBody.reasoning_effort !== undefined
+      ) {
+        jsonBody.reasoning_effort = normalizeEffort(jsonBody.reasoning_effort);
+        reasoningBody = jsonBody;
+        fetchOptions.body = JSON.stringify(jsonBody);
+      }
 
       // Let GPT-6 use its default temperature regardless of client-side caches.
       // Require a family boundary so unrelated IDs such as gpt-60 stay untouched.
@@ -154,7 +170,14 @@ export async function requestOpenai(req: NextRequest) {
 
   const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000);
   try {
-    const res = await fetch(fetchUrl, fetchOptions);
+    const attempt = reasoningBody
+      ? await fetchWithEffortFallback(fetchUrl, fetchOptions, reasoningBody)
+      : {
+          response: await fetch(fetchUrl, fetchOptions),
+          effective: undefined,
+          fallback: false,
+        };
+    const res = attempt.response;
 
     // Extract the OpenAI-Organization header from the response
     const openaiOrganizationHeader = res.headers.get("OpenAI-Organization");
@@ -169,6 +192,10 @@ export async function requestOpenai(req: NextRequest) {
 
     // to prevent browser prompt for credentials
     const newHeaders = new Headers(res.headers);
+    if (attempt.effective)
+      newHeaders.set("x-nextchat-reasoning-effort", attempt.effective);
+    if (attempt.fallback)
+      newHeaders.set("x-nextchat-reasoning-fallback", "true");
     newHeaders.delete("www-authenticate");
     // to disable nginx buffering
     newHeaders.set("X-Accel-Buffering", "no");

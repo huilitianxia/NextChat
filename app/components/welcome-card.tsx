@@ -2,6 +2,8 @@ import { ReactNode } from "react";
 import { useAccessStore } from "../store";
 import styles from "./welcome-card.module.scss";
 import clsx from "clsx";
+import { WorkflowGrid } from "./workflow-grid";
+import { WorkspaceQuote } from "./workspace-quote";
 
 const INSPIRATIONS = [
   {
@@ -86,6 +88,7 @@ export function WelcomeCard(props: {
   compact?: boolean;
   children?: ReactNode;
   onPromptSelect?: (prompt: string) => void;
+  onWorkflowSelect?: (id: string, prompt: string, image?: string) => void;
 }) {
   const profile = useAccessStore((state) => state.friendProfile);
   return (
@@ -111,10 +114,7 @@ export function WelcomeCard(props: {
           </svg>
           {profile?.badge || "好友专属空间"}
         </span>
-        <h1>
-          你好，{profile?.name || "朋友"}
-          <span className={styles.dot}>。</span>
-        </h1>
+        <h1>你好 {profile?.name || "朋友"}</h1>
         <p className={styles.greeting}>
           {profile?.greeting || "很高兴见到你。有什么想法，我们一起聊聊。"}
         </p>
@@ -134,6 +134,13 @@ export function WelcomeCard(props: {
         </div>
         {props.children}
       </section>
+      <WorkspaceQuote major={profile?.major} />
+      {props.onWorkflowSelect && (
+        <WorkflowGrid
+          major={profile?.major}
+          onSelect={props.onWorkflowSelect}
+        />
+      )}
       {props.onPromptSelect && (
         <section className={styles.inspirations} aria-label="灵感起点">
           {INSPIRATIONS.map((item) => (

@@ -109,6 +109,14 @@
   @include dark;
 }
 
+// Explicit appearance must override the OS preference for syntax colors as well.
+:root[data-theme="light"] {
+  @include light;
+}
+:root[data-theme="dark"] {
+  @include dark;
+}
+
 :root {
   @include light;
 }

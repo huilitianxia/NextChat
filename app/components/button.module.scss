@@ -15,6 +15,18 @@
   user-select: none;
   border: none;
   color: var(--black);
+  svg [style*="stroke:"] {
+    stroke: currentColor !important;
+  }
+  svg path[style*="fill:"] {
+    fill: currentColor !important;
+  }
+  svg [fill="#333"],
+  svg [fill="#333333"],
+  svg [fill="#000"],
+  svg [fill="#000000"] {
+    fill: currentColor;
+  }
 
   &:focus-visible {
     outline: 2px solid var(--primary);

@@ -12,7 +12,10 @@ const config: Config = {
   testEnvironment: "jsdom",
   testMatch: ["**/*.test.js", "**/*.test.ts", "**/*.test.jsx", "**/*.test.tsx"],
   setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"],
+  modulePathIgnorePatterns: ["<rootDir>/.next/"],
   moduleNameMapper: {
+    // PptxGenJS publishes .js ESM without type:module; Jest uses its real CJS build.
+    "^pptxgenjs$": "<rootDir>/node_modules/pptxgenjs/dist/pptxgen.cjs.js",
     "^@/(.*)$": "<rootDir>/$1",
   },
   extensionsToTreatAsEsm: [".ts", ".tsx"],

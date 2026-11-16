@@ -8,7 +8,7 @@ import styles from "./home.module.scss";
 import BotIcon from "../icons/nextchat-bot.svg";
 import LoadingIcon from "../icons/three-dots.svg";
 
-import { getCSSVar, useMobileScreen } from "../utils";
+import { useMobileScreen } from "../utils";
 
 import dynamic from "next/dynamic";
 import { Path, SlotID, ServiceProvider } from "../constant";
@@ -24,12 +24,14 @@ import {
   Navigate,
 } from "react-router-dom";
 import { SideBar } from "./sidebar";
+import { useWorkspacePreferences } from "../store/workspace-preferences";
 import { useAppConfig } from "../store/config";
 import { AuthPage } from "./auth";
 import { getClientConfig } from "../config/client";
 import { type ClientApi, getClientApi } from "../client/api";
 import { useAccessStore } from "../store";
 import clsx from "clsx";
+import { useFinale } from "../store/finale";
 
 export function Loading(props: { noLogo?: boolean }) {
   return (
@@ -55,36 +57,54 @@ const Chat = dynamic(async () => (await import("./chat")).Chat, {
 const NewChat = dynamic(async () => (await import("./new-chat")).NewChat, {
   loading: () => <Loading noLogo />,
 });
+const WorkspaceCommands = dynamic(() => import("./workspace-commands"), {
+  ssr: false,
+});
+const ArtifactPreview = dynamic(() => import("./artifact-preview"), {
+  ssr: false,
+});
+const FinaleHub = dynamic(() => import("./finale-hub"), { ssr: false });
+const PdfSplitViewer = dynamic(() => import("./pdf-split-viewer"), {
+  ssr: false,
+});
+const SharedPreview = dynamic(() => import("./shared-preview"), { ssr: false });
 
 export function useSwitchTheme() {
-  const config = useAppConfig();
-
+  const { mode, palette } = useWorkspacePreferences();
+  const verified = useAccessStore((state) => state.identityVerified);
+  const identity = useAccessStore((state) => state.friendProfile?.identityId);
   useEffect(() => {
-    document.body.classList.remove("light");
-    document.body.classList.remove("dark");
-
-    if (config.theme === "dark") {
-      document.body.classList.add("dark");
-    } else if (config.theme === "light") {
-      document.body.classList.add("light");
+    if (!verified || !identity) return;
+    try {
+      if (
+        !localStorage.getItem(`nextchat:user:${identity}:workspace-preferences`)
+      ) {
+        useWorkspacePreferences
+          .getState()
+          .setPreferences({ mode: useAppConfig.getState().theme });
+      }
+    } catch {
+      /* Preferences remain usable when storage is denied. */
     }
-
-    const metaDescriptionDark = document.querySelector(
-      'meta[name="theme-color"][media*="dark"]',
-    );
-    const metaDescriptionLight = document.querySelector(
-      'meta[name="theme-color"][media*="light"]',
-    );
-
-    if (config.theme === "auto") {
-      metaDescriptionDark?.setAttribute("content", "#151515");
-      metaDescriptionLight?.setAttribute("content", "#fafafa");
-    } else {
-      const themeColor = getCSSVar("--theme-color");
-      metaDescriptionDark?.setAttribute("content", themeColor);
-      metaDescriptionLight?.setAttribute("content", themeColor);
-    }
-  }, [config.theme]);
+  }, [verified, identity]);
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      const dark = mode === "dark" || (mode === "auto" && media.matches);
+      const root = document.documentElement;
+      root.dataset.theme = dark ? "dark" : "light";
+      root.dataset.palette = palette;
+      root.style.colorScheme = dark ? "dark" : "light";
+      document.body.classList.remove("light", "dark");
+      const color = getComputedStyle(root).getPropertyValue("--gray").trim();
+      document
+        .querySelectorAll('meta[name="theme-color"]')
+        .forEach((meta) => meta.setAttribute("content", color));
+    };
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [mode, palette]);
 }
 
 function useHtmlLang() {
@@ -118,15 +138,22 @@ export function WindowContent(props: { children: React.ReactNode }) {
 
 function Screen() {
   const config = useAppConfig();
+  const zen = useFinale((state) => state.zen);
+  const pdf = useFinale((state) => state.pdf);
   const location = useLocation();
   const isArtifact = location.pathname.includes(Path.Artifacts);
   const isHome = location.pathname === Path.Home;
   const isAuth = location.pathname === Path.Auth;
+  const isShare = /^\/?share=/.test(location.pathname);
   const access = useAccessStore();
+  useEffect(() => {
+    if (isShare) window.dispatchEvent(new Event("campus:share"));
+  }, [isShare, location.pathname]);
 
   const isMobileScreen = useMobileScreen();
   const shouldTightBorder =
     getClientConfig()?.isApp || (config.tightBorder && !isMobileScreen);
+  if (isShare) return null;
 
   if (
     !config._hasHydrated ||
@@ -150,12 +177,16 @@ function Screen() {
     if (isAuth) return <AuthPage />;
     return (
       <>
-        <SideBar
-          className={clsx({
-            [styles["sidebar-show"]]: isHome,
-          })}
-        />
-        <WindowContent>
+        {!zen && (
+          <SideBar
+            className={clsx({
+              [styles["sidebar-show"]]: isHome,
+            })}
+          />
+        )}
+        <WindowContent
+          key={`workspace-${access.friendProfile?.identityId || "public"}`}
+        >
           <Routes>
             <Route path={Path.Home} element={<Chat />} />
             <Route path={Path.NewChat} element={<NewChat />} />
@@ -164,6 +195,22 @@ function Screen() {
             <Route path="*" element={<Navigate to={Path.Chat} replace />} />
           </Routes>
         </WindowContent>
+        {!zen &&
+          (pdf ? (
+            <PdfSplitViewer
+              key={`pdf-${access.friendProfile?.identityId || "public"}`}
+            />
+          ) : (
+            <ArtifactPreview
+              key={`artifact-${access.friendProfile?.identityId || "public"}`}
+            />
+          ))}
+        <WorkspaceCommands
+          key={`commands-${access.friendProfile?.identityId || "public"}`}
+        />
+        <FinaleHub
+          key={`finale-${access.friendProfile?.identityId || "public"}`}
+        />
       </>
     );
   };
@@ -219,9 +266,11 @@ export function Home() {
 
   return (
     <ErrorBoundary>
-      <Router>
-        <Screen />
-      </Router>
+      <SharedPreview>
+        <Router>
+          <Screen />
+        </Router>
+      </SharedPreview>
     </ErrorBoundary>
   );
 }

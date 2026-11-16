@@ -1,9 +1,12 @@
+import {
+  useWorkspacePreferences,
+  AppearanceMode,
+} from "../store/workspace-preferences";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Path, ServiceProvider } from "../constant";
-import { Theme, useAccessStore, useAppConfig, useChatStore } from "../store";
+import { Path, DEFAULT_CHAT_MODEL } from "../constant";
+import { Theme, useAccessStore, useChatStore } from "../store";
 import { downloadAs } from "../utils";
-import { useAllModels } from "../utils/hooks";
 import { cacheImageToBase64Image } from "../utils/chat";
 import { buildConversationExport } from "../utils/friend-export";
 import { IconButton } from "./button";
@@ -12,19 +15,20 @@ import LeftIcon from "../icons/left.svg";
 import ExportIcon from "../icons/export.svg";
 import ClearIcon from "../icons/clear.svg";
 import styles from "./settings.module.scss";
+import dynamic from "next/dynamic";
+const LegacyData = dynamic(() => import("./legacy-data"), { ssr: false });
+const VaultBackup = dynamic(() => import("./vault-backup"), { ssr: false });
+const CapabilityCheck = dynamic(() => import("./capability-check"), {
+  ssr: false,
+});
 
 export function Settings() {
+  const preferences = useWorkspacePreferences();
   const navigate = useNavigate();
-  const config = useAppConfig();
   const access = useAccessStore();
   const chatStore = useChatStore();
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
-  const models = useAllModels().filter(
-    (model) =>
-      model.available &&
-      model.provider?.providerName === ServiceProvider.OpenAI,
-  );
   const themeNames = {
     [Theme.Auto]: "跟随系统",
     [Theme.Light]: "浅色",
@@ -64,19 +68,12 @@ export function Settings() {
   async function clearData() {
     if (
       !(await showConfirm(
-        "将清除这个浏览器中的所有对话、附件缓存、设置和登录身份，且无法撤销。请先导出需要保留的对话。确定清除吗？",
+        "将清除当前身份在此浏览器中的对话、资料库和设置，并退出登录，且无法撤销。其他身份与旧版未分区记录会保留。请先导出需要的对话。确定清除吗？",
       ))
     )
       return;
     setBusy(true);
     try {
-      if ("caches" in window) {
-        await Promise.all(
-          ["chatgpt-next-web-cache", "chatgpt-next-web-file"].map((key) =>
-            caches.delete(key),
-          ),
-        );
-      }
       await chatStore.clearAllData();
     } catch {
       setStatus("部分数据未能清除，请检查浏览器存储权限后重试。");
@@ -121,10 +118,10 @@ export function Settings() {
           </label>
           <select
             id="friend-theme"
-            value={config.theme}
+            value={preferences.mode}
             onChange={(event) =>
-              config.update((state) => {
-                state.theme = event.target.value as Theme;
+              preferences.setPreferences({
+                mode: event.target.value as AppearanceMode,
               })
             }
           >
@@ -138,34 +135,21 @@ export function Settings() {
         <div className={styles.row}>
           <label htmlFor="friend-default-model">
             <strong>默认模型</strong>
-            <span>用于新建对话；当前对话可单独切换</span>
+            <span>新会话固定使用 6.1 Sol；会话内可选择允许的模型</span>
           </label>
-          <select
-            id="friend-default-model"
-            value={config.modelConfig.model}
-            disabled={!models.length}
-            onChange={(event) => config.setDefaultModel(event.target.value)}
-          >
-            {!models.some(
-              (model) => model.name === config.modelConfig.model,
-            ) && (
-              <option value={config.modelConfig.model}>
-                {config.modelConfig.model}
-              </option>
-            )}
-            {models.map((model) => (
-              <option key={model.name} value={model.name}>
-                {model.displayName || model.name}
-              </option>
-            ))}
+          <select id="friend-default-model" value={DEFAULT_CHAT_MODEL} disabled>
+            <option value={DEFAULT_CHAT_MODEL}>{DEFAULT_CHAT_MODEL}</option>
           </select>
         </div>
       </section>
+      <CapabilityCheck />
       <section className={styles.card} aria-label="本地数据">
+        <LegacyData />
+        <VaultBackup />
         <div className={styles.row}>
           <div>
             <strong>导出对话</strong>
-            <span>保存当前浏览器的全部对话记录</span>
+            <span>保存当前身份的全部对话记录</span>
           </div>
           <IconButton
             icon={<ExportIcon />}
@@ -179,7 +163,7 @@ export function Settings() {
         <div className={styles.row}>
           <div>
             <strong>清除本地数据</strong>
-            <span>清空对话、附件缓存、设置及登录身份</span>
+            <span>仅清空当前身份的对话、资料库和设置</span>
           </div>
           <IconButton
             icon={<ClearIcon />}

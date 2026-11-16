@@ -34,11 +34,13 @@ export interface RequestMessage {
 }
 
 export interface LLMConfig {
+  webSearch?: boolean;
   model: string;
   providerName?: string;
   temperature?: number;
   top_p?: number;
   stream?: boolean;
+  reasoningEffort?: import("../utils/reasoning").ReasoningEffort;
   presence_penalty?: number;
   frequency_penalty?: number;
   size?: DalleRequestPayload["size"];
@@ -56,6 +58,12 @@ export interface SpeechOptions {
 }
 
 export interface ChatOptions {
+  onEffort?: (
+    effort: import("../utils/reasoning").ReasoningEffort,
+    fallback: boolean,
+  ) => void;
+  onSources?: (sources: import("../utils/campus-types").WebSource[]) => void;
+  onSearchNotice?: (notice: string) => void;
   messages: RequestMessage[];
   config: LLMConfig;
 

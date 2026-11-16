@@ -2,7 +2,13 @@ import { create } from "zustand";
 import { combine, persist, createJSONStorage } from "zustand/middleware";
 import { Updater } from "../typing";
 import { deepClone } from "./clone";
+import { nanoid } from "nanoid";
 import { indexedDBStorage } from "@/app/utils/indexedDB-storage";
+import {
+  currentIdentity,
+  identityStorageKey,
+  registerIdentityStore,
+} from "./identity-storage";
 
 type SecondParam<T> = T extends (
   _f: infer _F,
@@ -34,14 +40,25 @@ export function createPersistStore<T extends object, M>(
   ) => M,
   persistOptions: SecondParam<typeof persist<T & M & MakeUpdater<T>>>,
 ) {
-  persistOptions.storage = createJSONStorage(() => indexedDBStorage);
+  const originalName = persistOptions.name;
+  const scoped = originalName !== "access-control";
+  let suspended = false;
+  if (scoped) persistOptions.name = identityStorageKey(originalName);
+  persistOptions.storage = createJSONStorage(() => ({
+    getItem: (key: string) => indexedDBStorage.getItem(key),
+    setItem: (key: string, value: string) =>
+      suspended || (scoped && currentIdentity() === "locked")
+        ? Promise.resolve()
+        : indexedDBStorage.setItem(key, value),
+    removeItem: (key: string) => indexedDBStorage.removeItem(key),
+  }));
   const oldOonRehydrateStorage = persistOptions?.onRehydrateStorage;
   persistOptions.onRehydrateStorage = (state) => {
     oldOonRehydrateStorage?.(state);
     return () => state.setHasHydrated(true);
   };
 
-  return create(
+  const store = create(
     persist(
       combine(
         {
@@ -75,4 +92,34 @@ export function createPersistStore<T extends object, M>(
       persistOptions as any,
     ),
   );
+  if (scoped) {
+    registerIdentityStore(async (id) => {
+      suspended = true;
+      try {
+        store.persist.setOptions({
+          name: identityStorageKey(originalName, id),
+        });
+        const fresh = deepClone(state) as any;
+        if (
+          originalName === "chat-next-web-store" &&
+          Array.isArray(fresh.sessions)
+        ) {
+          fresh.sessions = fresh.sessions.map((session: any) => ({
+            ...session,
+            id: nanoid(),
+          }));
+        }
+        store.setState({
+          ...fresh,
+          lastUpdateTime: 0,
+          _hasHydrated: false,
+        } as any);
+        await store.persist.rehydrate();
+        store.setState({ _hasHydrated: true } as any);
+      } finally {
+        suspended = false;
+      }
+    });
+  }
+  return store;
 }

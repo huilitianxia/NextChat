@@ -3,6 +3,7 @@ import {
   getFriendAccessConfig,
   matchFriendProfile,
   MAX_ACCESS_CODE_LENGTH,
+  identityIdForCode,
 } from "@/app/config/friend-profiles";
 
 export const runtime = "edge";
@@ -55,10 +56,13 @@ export async function POST(req: NextRequest) {
     const config = getFriendAccessConfig();
     if (!config.valid)
       return response({ error: "访问配置有误，请联系管理员" }, 503);
-    const profile = matchFriendProfile(body.code, config);
+    const profile = await matchFriendProfile(body.code, config);
     if (!profile) return response({ error: "访问密码不正确或已失效" }, 401);
     // Return only this identity, never codes, hashes, or the full profile table.
-    return response(profile);
+    return response({
+      ...profile,
+      identityId: await identityIdForCode(body.code),
+    });
   } catch {
     return response({ error: "访问密码格式不正确" }, 400);
   } finally {

@@ -24,6 +24,9 @@ import type { FriendProfile } from "../config/friend-profiles";
 import { getClientConfig } from "../config/client";
 import { createPersistStore } from "../utils/store";
 import { useAppConfig } from "./config";
+import { activateIdentity } from "../utils/identity-storage";
+import { majorForName } from "../config/user-profiles";
+import { ChatControllerPool } from "../client/controller";
 
 let fetchState = 0; // 0 not fetched, 1 fetching, 2 done
 let verificationVersion = 0;
@@ -242,7 +245,9 @@ export const useAccessStore = createPersistStore(
         !data ||
         typeof data.name !== "string" ||
         typeof data.greeting !== "string" ||
-        typeof data.badge !== "string"
+        typeof data.badge !== "string" ||
+        typeof data.identityId !== "string" ||
+        !/^[a-zA-Z0-9_-]{1,100}$/.test(data.identityId)
       ) {
         throw new Error("验证服务返回异常，请稍后重试");
       }
@@ -252,15 +257,30 @@ export const useAccessStore = createPersistStore(
           name: data.name,
           greeting: data.greeting,
           badge: data.badge,
+          major: data.major ?? majorForName(data.name),
+          identityId: data.identityId,
         },
-        identityVerified: true,
+        identityVerified: false,
         useCustomConfig: false,
         openaiApiKey: "",
         openaiUrl: ApiPath.OpenAI,
       });
+      ChatControllerPool.stopAll();
+      await activateIdentity(
+        typeof data.identityId === "string" ? data.identityId : "public",
+      );
+      if (revision !== verificationVersion) throw new Error("登录操作已取消");
+      useAppConfig
+        .getState()
+        .applyServerDefault(get().defaultModel || DEFAULT_CHAT_MODEL);
+      // Campus defaults are pinned; per-conversation allowed model choices remain intact.
+      useAppConfig.getState().setDefaultModel(DEFAULT_CHAT_MODEL);
+      set({ identityVerified: true });
     },
     clearIdentity() {
       verificationVersion++;
+      ChatControllerPool.stopAll();
+      void activateIdentity("locked");
       set({
         accessCode: "",
         friendProfile: null,
@@ -346,6 +366,8 @@ export const useAccessStore = createPersistStore(
                 name: profile.name,
                 greeting: profile.greeting,
                 badge: profile.badge,
+                major: profile.major,
+                identityId: profile.identityId,
               }
             : null,
         identityVerified: false,

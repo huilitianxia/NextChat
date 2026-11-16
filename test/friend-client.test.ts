@@ -8,7 +8,13 @@ const { useAccessStore } = await import("../app/store/access");
 const { ModelProvider, ServiceProvider } = await import("../app/constant");
 const { ChatGPTApi } = await import("../app/client/platforms/openai");
 
-const profile = { name: "朋友", greeting: "欢迎回来", badge: "VIP" };
+const profile = {
+  name: "朋友",
+  greeting: "欢迎回来",
+  badge: "VIP",
+  major: "research" as const,
+  identityId: "qa-client-user",
+};
 beforeEach(() => {
   useAccessStore.getState().clearIdentity();
 });
@@ -89,6 +95,21 @@ test("incorrect password clears an older identity", async () => {
   ).rejects.toThrow("密码不正确");
   expect(useAccessStore.getState().friendProfile).toBeNull();
   expect(useAccessStore.getState().identityVerified).toBe(false);
+});
+
+test("verified campus users keep the new-chat default pinned to gpt-6.1-sol", async () => {
+  const { useAppConfig } = await import("../app/store/config");
+  useAppConfig.getState().setDefaultModel("other-reasoning-model");
+  useAccessStore.setState({ defaultModel: "other-reasoning-model" });
+  global.fetch = jest.fn(
+    async () =>
+      ({
+        ok: true,
+        json: async () => ({ ...profile, identityId: "qa-pinned-default" }),
+      }) as Response,
+  ) as typeof fetch;
+  await useAccessStore.getState().verifyAccessCode("valid-code");
+  expect(useAppConfig.getState().modelConfig.model).toBe("gpt-6.1-sol");
 });
 
 test("switching identity preserves the administrator's model settings", () => {

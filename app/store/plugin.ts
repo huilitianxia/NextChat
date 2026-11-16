@@ -239,7 +239,8 @@ export const usePluginStore = createPersistStore(
       fetch("./plugins.json")
         .then((res) => res.json())
         .then((res) => {
-          Promise.all(
+          if (!Array.isArray(res)) return;
+          return Promise.all(
             res.map((item: any) =>
               // skip get schema
               state.get(item.id)
@@ -265,6 +266,9 @@ export const usePluginStore = createPersistStore(
                 });
               });
           });
+        })
+        .catch(() => {
+          /* Optional built-in schemas must not break login/rehydration. */
         });
     },
   },

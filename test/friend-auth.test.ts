@@ -45,7 +45,19 @@ describe("friend identity verification", () => {
   test("returns exactly one selected profile and forbids caching", async () => {
     const response = await verify({ code: "wang-secret" });
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual(wang);
+    const result = await response.json();
+    expect(result).toMatchObject({
+      ...wang,
+      major: "research",
+      identityId: expect.stringMatching(/^[a-f0-9]{40}$/),
+    });
+    expect(Object.keys(result).sort()).toEqual([
+      "badge",
+      "greeting",
+      "identityId",
+      "major",
+      "name",
+    ]);
     expect(response.headers.get("cache-control")).toContain("no-store");
   });
 
@@ -56,12 +68,15 @@ describe("friend identity verification", () => {
     expect((await verify({ code: "" })).status).toBe(401);
   });
 
-  test("friend metadata takes precedence over a matching legacy CODE", () => {
+  test("friend metadata takes precedence over a matching legacy CODE", async () => {
     const config = getFriendAccessConfig(
       JSON.stringify({ overlap: wang }),
       "overlap",
     );
-    expect(matchFriendProfile("overlap", config)).toEqual(wang);
+    expect(await matchFriendProfile("overlap", config)).toEqual({
+      ...wang,
+      major: "research",
+    });
   });
 
   test.each([
@@ -86,10 +101,10 @@ describe("friend identity verification", () => {
     expect((await verify({ code: "constructor" })).status).toBe(401);
   });
 
-  test("only an explicitly unprotected configuration permits anonymous access", async () => {
+  test("built-in accounts keep a zero-config deployment private", async () => {
     delete process.env.CODE;
     delete process.env.FRIEND_PROFILES;
-    expect((await verify({ code: "" })).status).toBe(200);
+    expect((await verify({ code: "" })).status).toBe(401);
   });
 
   test.each(
@@ -121,38 +136,44 @@ describe("model request authorization", () => {
     );
   }
 
-  test("validates the same friend code and injects only the server key", () => {
+  test("validates the same friend code and injects only the server key", async () => {
     const req = request({ "x-nextchat-access-code": "wang-secret" });
-    expect(auth(req, ModelProvider.GPT).error).toBe(false);
+    expect((await auth(req, ModelProvider.GPT)).error).toBe(false);
     expect(req.headers.get("authorization")).toBe("Bearer sk-test-server-only");
     expect(req.headers.has("x-nextchat-access-code")).toBe(false);
   });
 
-  test("retains legacy nk-code access and supports Unicode friend passwords", () => {
+  test("retains legacy nk-code access and supports Unicode friend passwords", async () => {
     expect(
-      auth(
-        request({ authorization: "Bearer nk-legacy-one" }),
-        ModelProvider.GPT,
+      (
+        await auth(
+          request({ authorization: "Bearer nk-legacy-one" }),
+          ModelProvider.GPT,
+        )
       ).error,
     ).toBe(false);
     process.env.FRIEND_PROFILES = JSON.stringify({ 朋友密码: wang });
     expect(
-      auth(
-        request({ "x-nextchat-access-code": encodeURIComponent("朋友密码") }),
-        ModelProvider.GPT,
+      (
+        await auth(
+          request({ "x-nextchat-access-code": encodeURIComponent("朋友密码") }),
+          ModelProvider.GPT,
+        )
       ).error,
     ).toBe(false);
   });
 
-  test("stored profiles cannot bypass revoked access codes", () => {
+  test("stored profiles cannot bypass revoked access codes", async () => {
     process.env.FRIEND_PROFILES = JSON.stringify({ "new-code": wang });
     expect(
-      auth(
-        request({ "x-nextchat-access-code": "wang-secret" }),
-        ModelProvider.GPT,
+      (
+        await auth(
+          request({ "x-nextchat-access-code": "wang-secret" }),
+          ModelProvider.GPT,
+        )
       ).error,
     ).toBe(true);
-    expect(auth(request({}), ModelProvider.GPT).error).toBe(true);
+    expect((await auth(request({}), ModelProvider.GPT)).error).toBe(true);
   });
 
   test.each<Record<string, string>>([
@@ -165,18 +186,22 @@ describe("model request authorization", () => {
     },
   ])(
     "rejects supplied provider keys instead of bypassing the password",
-    (headers) => {
+    async (headers) => {
       expect(
-        auth(request(headers as Record<string, string>), ModelProvider.GPT)
-          .error,
+        (
+          await auth(
+            request(headers as Record<string, string>),
+            ModelProvider.GPT,
+          )
+        ).error,
       ).toBe(true);
     },
   );
 
-  test("missing server key never forwards a password upstream", () => {
+  test("missing server key never forwards a password upstream", async () => {
     delete process.env.OPENAI_API_KEY;
     const req = request({ "x-nextchat-access-code": "wang-secret" });
-    expect(auth(req, ModelProvider.GPT).error).toBe(true);
+    expect((await auth(req, ModelProvider.GPT)).error).toBe(true);
     expect(req.headers.has("authorization")).toBe(false);
   });
 });

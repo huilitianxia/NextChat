@@ -1,3 +1,5 @@
+import { useWorkspacePreferences } from "./workspace-preferences";
+import { ReasoningEffort, splitReasoning } from "../utils/reasoning";
 import {
   getMessageTextContent,
   isDalle3,
@@ -5,7 +7,6 @@ import {
   trimTopic,
 } from "../utils";
 
-import { indexedDBStorage } from "@/app/utils/indexedDB-storage";
 import { nanoid } from "nanoid";
 import type {
   ClientApi,
@@ -34,6 +35,14 @@ import { ModelConfig, ModelType, useAppConfig } from "./config";
 import { useAccessStore } from "./access";
 import { collectModelsWithDefaultModel } from "../utils/model";
 import { createEmptyMask, Mask } from "./mask";
+import type {
+  SourceChunk,
+  WebSource,
+  ImageRevision,
+} from "../utils/campus-types";
+import { assertSafePrompt } from "../utils/security-guard";
+import { currentIdentity } from "../utils/identity-storage";
+import { workflowInstruction } from "../config/workflow-templates";
 
 const localStorage = safeLocalStorage();
 
@@ -51,6 +60,14 @@ export type ChatMessageTool = {
 };
 
 export type ChatMessage = RequestMessage & {
+  reasoningEffort?: ReasoningEffort;
+  reasoningFallback?: boolean;
+  reasoningStartedAt?: number;
+  reasoningDurationMs?: number;
+  sources?: SourceChunk[];
+  webSources?: WebSource[];
+  searchNotice?: string;
+  imageRevision?: ImageRevision;
   date: string;
   streaming?: boolean;
   isError?: boolean;
@@ -78,6 +95,9 @@ export interface ChatStat {
 }
 
 export interface ChatSession {
+  workflowId?: string;
+  webSearch?: boolean;
+  initialPrompt?: string;
   id: string;
   topic: string;
 
@@ -388,8 +408,19 @@ export const useChatStore = createPersistStore(
         attachImages?: string[],
         isMcpResponse?: boolean,
       ) {
+        assertSafePrompt(content);
+        const owner = currentIdentity();
         const session = get().currentSession();
         const modelConfig = session.mask.modelConfig;
+        const { retrieveReferences, referenceContext } = await import(
+          "../utils/local-rag"
+        );
+        const sources =
+          owner === "locked"
+            ? []
+            : await retrieveReferences(session.id, content);
+        if (owner !== currentIdentity())
+          throw new Error("身份已切换，请重新发送。");
 
         // MCP Response no need to fill template
         let mContent: string | MultimodalContent[] = isMcpResponse
@@ -416,11 +447,27 @@ export const useChatStore = createPersistStore(
           role: "assistant",
           streaming: true,
           model: modelConfig.model,
+          sources,
+          reasoningEffort: useWorkspacePreferences.getState().effort,
         });
 
         // get recent messages
         const recentMessages = await get().getMessagesWithMemory();
-        const sendMessages = recentMessages.concat(userMessage);
+        if (owner !== currentIdentity())
+          throw new Error("身份已切换，请重新发送。");
+        const instruction = [
+          workflowInstruction(session.workflowId),
+          referenceContext(sources),
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        const sendMessages = [
+          ...(instruction
+            ? [createMessage({ role: "system", content: instruction })]
+            : []),
+          ...recentMessages,
+          userMessage,
+        ];
         const messageIndex = session.messages.length + 1;
 
         // save user's and bot's message
@@ -439,18 +486,60 @@ export const useChatStore = createPersistStore(
         // make request
         api.llm.chat({
           messages: sendMessages,
-          config: { ...modelConfig, stream: true },
+          config: {
+            ...modelConfig,
+            stream: true,
+            webSearch: session.webSearch === true,
+            reasoningEffort: botMessage.reasoningEffort,
+          },
+          onEffort(effort, fallback) {
+            if (owner !== currentIdentity()) return;
+            botMessage.reasoningEffort = effort;
+            botMessage.reasoningFallback = fallback;
+          },
+          onSources(sources) {
+            if (owner !== currentIdentity()) return;
+            botMessage.webSources = sources;
+            get().updateTargetSession(session, (s) => {
+              s.messages = s.messages.concat();
+            });
+          },
+          onSearchNotice(notice) {
+            if (owner !== currentIdentity()) return;
+            botMessage.searchNotice = notice;
+            get().updateTargetSession(session, (s) => {
+              s.messages = s.messages.concat();
+            });
+          },
           onUpdate(message) {
+            if (owner !== currentIdentity()) return;
             botMessage.streaming = true;
             if (message) {
               botMessage.content = message;
+              const reasoning = splitReasoning(message);
+              if (reasoning.reasoning && !botMessage.reasoningStartedAt)
+                botMessage.reasoningStartedAt = Date.now();
+              if (
+                !reasoning.thinking &&
+                botMessage.reasoningStartedAt &&
+                botMessage.reasoningDurationMs === undefined
+              )
+                botMessage.reasoningDurationMs =
+                  Date.now() - botMessage.reasoningStartedAt;
             }
             get().updateTargetSession(session, (session) => {
               session.messages = session.messages.concat();
             });
           },
           async onFinish(message) {
+            if (owner !== currentIdentity()) return;
             botMessage.streaming = false;
+            if (
+              botMessage.reasoningStartedAt &&
+              botMessage.reasoningDurationMs === undefined
+            )
+              botMessage.reasoningDurationMs =
+                Date.now() - botMessage.reasoningStartedAt;
             if (message) {
               botMessage.content = message;
               botMessage.date = new Date().toLocaleString();
@@ -475,6 +564,7 @@ export const useChatStore = createPersistStore(
             });
           },
           onError(error) {
+            if (owner !== currentIdentity()) return;
             const isAborted = error.message?.includes?.("aborted");
             botMessage.content +=
               "\n\n" +
@@ -643,6 +733,7 @@ export const useChatStore = createPersistStore(
         refreshTitle: boolean = false,
         targetSession: ChatSession,
       ) {
+        const owner = currentIdentity();
         const config = useAppConfig.getState();
         const session = targetSession;
         const modelConfig = session.mask.modelConfig;
@@ -694,6 +785,7 @@ export const useChatStore = createPersistStore(
               providerName,
             },
             onFinish(message, responseRes) {
+              if (owner !== currentIdentity()) return;
               if (responseRes?.status === 200) {
                 get().updateTargetSession(
                   session,
@@ -762,6 +854,7 @@ export const useChatStore = createPersistStore(
               session.memoryPrompt = message;
             },
             onFinish(message, responseRes) {
+              if (owner !== currentIdentity()) return;
               if (responseRes?.status === 200) {
                 console.log("[Memory] ", message);
                 get().updateTargetSession(session, (session) => {
@@ -794,8 +887,9 @@ export const useChatStore = createPersistStore(
         set(() => ({ sessions }));
       },
       async clearAllData() {
-        await indexedDBStorage.clear();
-        localStorage.clear();
+        const { clearIdentityData } = await import("../utils/identity-data");
+        await clearIdentityData();
+        useAccessStore.getState().clearIdentity();
         location.reload();
       },
       setLastInput(lastInput: string) {

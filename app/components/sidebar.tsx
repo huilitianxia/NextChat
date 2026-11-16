@@ -1,4 +1,4 @@
-import React, { Fragment, useEffect, useMemo, useRef } from "react";
+import React, { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import styles from "./home.module.scss";
 
@@ -30,6 +30,10 @@ import clsx from "clsx";
 const ChatList = dynamic(async () => (await import("./chat-list")).ChatList, {
   loading: () => null,
 });
+const WorkspaceTheme = dynamic(() => import("./workspace-theme"), {
+  ssr: false,
+});
+const LocalEncoder = dynamic(() => import("./local-encoder"), { ssr: false });
 
 export function useHotKey() {
   const chatStore = useChatStore();
@@ -218,6 +222,7 @@ export function SideBar(props: { className?: string }) {
   const navigate = useNavigate();
   const chatStore = useChatStore();
   const profile = useAccessStore((state) => state.friendProfile);
+  const [encoder, setEncoder] = useState(false);
 
   return (
     <SideBarContainer
@@ -231,6 +236,15 @@ export function SideBar(props: { className?: string }) {
         logo={<NextChatIcon />}
         shouldNarrow={shouldNarrow}
       >
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <WorkspaceTheme />
+          <IconButton
+            icon={<span aria-hidden="true">⌘</span>}
+            text="K"
+            aria="快捷命令"
+            onClick={() => window.dispatchEvent(new Event("campus:commands"))}
+          />
+        </div>
         <div className={styles["sidebar-header-bar"]}>
           <IconButton
             icon={<AddIcon />}
@@ -284,6 +298,48 @@ export function SideBar(props: { className?: string }) {
           </div>
         }
       />
+      <IconButton
+        text={shouldNarrow ? "⌘" : "本地编码工具"}
+        aria="本地编码工具"
+        onClick={() => setEncoder(true)}
+      />
+      <IconButton
+        text={shouldNarrow ? "研" : "参考文献格式化器"}
+        aria="参考文献格式化器"
+        onClick={() => {
+          void import("../store/finale").then(({ useFinale }) =>
+            useFinale.getState().open("citations"),
+          );
+        }}
+      />
+      <IconButton
+        text={shouldNarrow ? "记" : "知识手账"}
+        aria="知识手账"
+        onClick={() => {
+          void import("../store/finale").then(({ useFinale }) =>
+            useFinale.getState().open("vault"),
+          );
+        }}
+      />
+      <IconButton
+        text={shouldNarrow ? "算" : "专业百宝箱"}
+        aria="专业百宝箱"
+        onClick={() => {
+          void import("../store/finale").then(({ useFinale }) =>
+            useFinale.getState().open("toolbox"),
+          );
+        }}
+      />
+      <IconButton
+        text={shouldNarrow ? "/" : "个人快捷指令库"}
+        aria="个人快捷指令库"
+        onClick={() => {
+          void import("../store/finale").then(({ useFinale }) =>
+            useFinale.getState().open("macros"),
+          );
+        }}
+      />
+      {encoder && <LocalEncoder onClose={() => setEncoder(false)} />}
     </SideBarContainer>
   );
 }

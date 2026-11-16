@@ -1,3 +1,4 @@
+import { reportEffort } from "./reasoning";
 import {
   CACHE_URL_PREFIX,
   UPLOAD_URL,
@@ -324,6 +325,7 @@ export function stream(
         const contentType = res.headers.get("content-type");
         console.log("[Request] response content type: ", contentType);
         responseRes = res;
+        reportEffort(res, options.onEffort);
 
         if (contentType?.startsWith("text/plain")) {
           responseText = await res.clone().text();
@@ -417,8 +419,6 @@ export function streamWithThink(
   let runTools: any[] = [];
   let responseRes: Response;
   let isInThinkingMode = false;
-  let lastIsThinking = false;
-  let lastIsThinkingTagged = false; //between <think> and </think> tags
 
   // animate response to make it looks smooth
   function animateResponseText() {
@@ -517,6 +517,10 @@ export function streamWithThink(
       }
       console.debug("[ChatAPI] end");
       finished = true;
+      if (isInThinkingMode) {
+        remainText += "</think>";
+        isInThinkingMode = false;
+      }
       options.onFinish(responseText + remainText, responseRes);
     }
   };
@@ -550,6 +554,7 @@ export function streamWithThink(
         const contentType = res.headers.get("content-type");
         console.log("[Request] response content type: ", contentType);
         responseRes = res;
+        reportEffort(res, options.onEffort);
 
         if (contentType?.startsWith("text/plain")) {
           responseText = await res.clone().text();
@@ -599,53 +604,18 @@ export function streamWithThink(
             return;
           }
 
-          // deal with <think> and </think> tags start
-          if (!chunk.isThinking) {
-            if (chunk.content.startsWith("<think>")) {
-              chunk.isThinking = true;
-              chunk.content = chunk.content.slice(7).trim();
-              lastIsThinkingTagged = true;
-            } else if (chunk.content.endsWith("</think>")) {
-              chunk.isThinking = false;
-              chunk.content = chunk.content.slice(0, -8).trim();
-              lastIsThinkingTagged = false;
-            } else if (lastIsThinkingTagged) {
-              chunk.isThinking = true;
-            }
-          }
-          // deal with <think> and </think> tags start
-
-          // Check if thinking mode changed
-          const isThinkingChanged = lastIsThinking !== chunk.isThinking;
-          lastIsThinking = chunk.isThinking;
-
           if (chunk.isThinking) {
-            // If in thinking mode
-            if (!isInThinkingMode || isThinkingChanged) {
-              // If this is a new thinking block or mode changed, add prefix
+            if (!isInThinkingMode) {
+              remainText += "<think>";
               isInThinkingMode = true;
-              if (remainText.length > 0) {
-                remainText += "\n";
-              }
-              remainText += "> " + chunk.content;
-            } else {
-              // Handle newlines in thinking content
-              if (chunk.content.includes("\n\n")) {
-                const lines = chunk.content.split("\n\n");
-                remainText += lines.join("\n\n> ");
-              } else {
-                remainText += chunk.content;
-              }
             }
+            remainText += chunk.content;
           } else {
-            // If in normal mode
-            if (isInThinkingMode || isThinkingChanged) {
-              // If switching from thinking mode to normal mode
+            if (isInThinkingMode) {
+              remainText += "</think>\n\n";
               isInThinkingMode = false;
-              remainText += "\n\n" + chunk.content;
-            } else {
-              remainText += chunk.content;
             }
+            remainText += chunk.content;
           }
         } catch (e) {
           console.error("[Request] parse error", text, msg, e);

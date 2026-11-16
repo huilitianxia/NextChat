@@ -110,7 +110,67 @@
   margin-top: 30px;
   opacity: 0.5;
 }
+.healthActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.healthButton {
+  border: var(--border-in-light);
+  border-radius: 12px;
+  padding: 11px 14px;
+  background: var(--primary);
+  color: var(--on-primary);
+  cursor: pointer;
+  &:disabled {
+    cursor: wait;
+    opacity: 0.65;
+  }
+}
+.healthResults {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 0;
+  li {
+    padding: 14px;
+    border: var(--border-in-light);
+    border-radius: 12px;
+    min-width: 0;
+    > div {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+    }
+    code {
+      display: block;
+      margin-top: 8px;
+      font-size: 11px;
+      overflow-wrap: anywhere;
+      opacity: 0.75;
+    }
+    p {
+      margin-bottom: 0;
+    }
+    &[data-status="ok"] > div span {
+      color: var(--primary);
+    }
+    &[data-status="fallback"] > div span {
+      color: #a87819;
+    }
+    &[data-status="error"] > div span {
+      color: var(--red);
+    }
+  }
+}
 @media (max-width: 600px) {
+  .healthResults {
+    grid-template-columns: 1fr;
+  }
   .card {
     padding: 20px;
   }

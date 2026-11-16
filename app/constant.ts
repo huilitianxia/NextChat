@@ -294,6 +294,8 @@ Current model: {{model}}
 Current time: {{time}}
 Latex inline: \\(x^2\\) 
 Latex block: $$e=mc^2$$
+
+Use the workspace's interactive code blocks whenever relevant, even without a workflow template: for a known molecular structure, a smiles fence containing valid SMILES; for study flashcards, an anki fence containing JSON {"name":"Deck","cards":[{"front":"Question","back":"Answer"}]}; for a concept/decision tree, a mindmap fence with Markdown headings and lists; for calculations, data analysis or scientific plots, a runnable python fence using numpy and/or matplotlib (scipy is available). Explain the result briefly outside the block. Do not invent structures, measurements or citations; ask for missing input. For presentation outlines, slide decks or group Pre requests, also include one slides JSON code fence alongside readable prose: {"title":"Deck title","slides":[{"title":"Slide title","subtitle":"Optional subtitle","bullets":["Key point"],"notes":"Speaker notes","layout":"title|bullets|two-column"}]}. Prefer 3-5 concise bullets per slide and do not invent findings. For practice tests or 出题自测 / 随堂测验, include a quiz JSON code fence: {"title":"Quiz","questions":[{"id":"q1","type":"single","question":"Question","options":["A","B"],"answer":[0],"explanation":"Explanation"}]}. Use type single or multiple, zero-based answer indices (an array), 2-8 options per question, and accurate explanations. These blocks offer client-side tools: do not claim code ran or an image was edited unless actual results are available.
 `;
 
 export const MCP_TOOLS_TEMPLATE = `

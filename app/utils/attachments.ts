@@ -6,6 +6,7 @@ export type TextAttachment = {
   text: string;
   imageUrls?: string[];
   notice?: string;
+  labFile?: File;
 };
 export type DocumentAttachment = {
   text: string;
@@ -35,7 +36,7 @@ const TEXT_EXTENSIONS = new Set(
 );
 
 export const ATTACHMENT_ACCEPT =
-  `image/png,image/jpeg,image/webp,image/gif,application/pdf,.pdf,.docx,.doc,${WORD_MIME},application/msword,text/plain,text/markdown,text/csv,application/json,` +
+  `image/png,image/jpeg,image/webp,image/gif,application/pdf,.pdf,.docx,.doc,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,${WORD_MIME},application/msword,text/plain,text/markdown,text/csv,application/json,` +
   Array.from(TEXT_EXTENSIONS, (extension) => `.${extension}`).join(",");
 
 export function attachmentKind(file: Pick<File, "name" | "type" | "size">) {
@@ -43,6 +44,12 @@ export function attachmentKind(file: Pick<File, "name" | "type" | "size">) {
   if (file.size > MAX_ATTACHMENT_BYTES)
     throw new Error("单个文件不能超过 10 MB。");
   const extension = file.name.split(".").at(-1)?.toLowerCase() ?? "";
+  if (
+    extension === "xlsx" ||
+    file.type ===
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  )
+    return "xlsx" as const;
   // Word extensions take precedence over generic text MIME labels used by some pickers.
   if (extension === "docx") return "docx" as const;
   if (extension === "doc") return "doc" as const;
@@ -117,13 +124,50 @@ async function readWordAttachment(
   if (kind === "docx" || startsWithBytes(bytes, [0x50, 0x4b, 0x03, 0x04])) {
     let text: string;
     try {
-      // Webpack resolves Mammoth's browser entry; no upload, HTML rendering or Node APIs.
+      // Parse in an inert document; never insert converted Word HTML into the page.
       const mammoth = await import("mammoth");
-      const result = await mammoth.extractRawText({ arrayBuffer: bytes });
+      const structured = typeof DOMParser !== "undefined";
+      const result = structured
+        ? await mammoth.convertToHtml(
+            { arrayBuffer: bytes },
+            {
+              includeDefaultStyleMap: true,
+              convertImage: mammoth.images.imgElement(() =>
+                Promise.resolve({ src: "" }),
+              ),
+            },
+          )
+        : await mammoth.extractRawText({ arrayBuffer: bytes });
       if (result.messages.some((message) => message.type === "error")) {
         throw new Error(WORD_READ_ERROR);
       }
-      text = result.value.replace(/\r\n?/g, "\n").trim();
+      if (structured) {
+        const doc = new DOMParser().parseFromString(result.value, "text/html");
+        const walk = (element: Element): string => {
+          if (element.tagName === "TABLE")
+            return (
+              "[表格]\n" +
+              [...element.querySelectorAll("tr")]
+                .map((row) =>
+                  [...row.children]
+                    .map((cell) =>
+                      (cell.textContent || "").trim().replace(/\s+/g, " "),
+                    )
+                    .join("\t"),
+                )
+                .join("\n") +
+              "\n\n"
+            );
+          if (/^(P|H[1-6]|LI|BLOCKQUOTE)$/.test(element.tagName))
+            return (
+              (element.tagName === "LI" ? "- " : "") +
+              (element.textContent || "").trim() +
+              "\n\n"
+            );
+          return [...element.children].map(walk).join("");
+        };
+        text = walk(doc.body).trim();
+      } else text = result.value.replace(/\r\n?/g, "\n").trim();
     } catch {
       throw new Error(WORD_READ_ERROR);
     }
@@ -192,6 +236,15 @@ export async function readDocumentAttachment(
 ): Promise<DocumentAttachment> {
   const kind = attachmentKind(file);
   if (kind === "image") throw new Error("图片应通过图片附件添加。");
+  if (kind === "xlsx") {
+    const { spreadsheetText } = await import("./doc-io");
+    return {
+      text: validateAttachmentText(
+        await spreadsheetText(await file.arrayBuffer()),
+      ),
+      images: [],
+    };
+  }
   if (kind === "text") {
     const bytes = await file.arrayBuffer();
     return {

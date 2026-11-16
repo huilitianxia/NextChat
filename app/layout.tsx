@@ -12,15 +12,17 @@ export const metadata: Metadata = {
   title: "NextChat",
   description: "Your personal AI assistant.",
   appleWebApp: {
+    capable: true,
     title: "NextChat",
-    statusBarStyle: "default",
+    statusBarStyle: "black-translucent",
   },
+  icons: { icon: "/icons/campus.svg", apple: "/icons/campus-180.png" },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  viewportFit: "cover",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#fafafa" },
     { media: "(prefers-color-scheme: dark)", color: "#151515" },
@@ -35,16 +37,15 @@ export default function RootLayout({
   const serverConfig = getServerSideConfig();
 
   return (
-    <html lang="en">
+    <html lang="zh-CN" suppressHydrationWarning>
       <head>
         <meta name="config" content={JSON.stringify(getClientConfig())} />
-        <meta
-          name="viewport"
-          content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-        />
+        {/* Apply appearance before paint, including before React hydrates. */}
+        {/* eslint-disable-next-line @next/next/no-sync-scripts */}
+        <script src="/theme-bootstrap.js"></script>
         <link
           rel="manifest"
-          href="/site.webmanifest"
+          href="/manifest.json"
           crossOrigin="use-credentials"
         ></link>
         <script src="/serviceWorkerRegister.js" defer></script>

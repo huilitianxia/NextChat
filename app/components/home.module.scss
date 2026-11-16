@@ -38,6 +38,7 @@
 }
 
 .sidebar {
+  flex-shrink: 0;
   top: 0;
   width: var(--sidebar-width);
   box-sizing: border-box;
@@ -100,6 +101,7 @@
 }
 
 .window-content {
+  flex: 1 1 0;
   width: var(--window-content-width);
   height: 100%;
   display: flex;

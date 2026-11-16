@@ -460,3 +460,27 @@ pre {
     scroll-behavior: auto !important;
   }
 }
+
+@import "./themes.scss";
+html[data-zen="true"] [data-zen-hide] {
+  display: none !important;
+}
+html[data-zen="true"] [data-export-hide],
+html[data-zen="true"] [aria-label="回复导出"],
+html[data-zen="true"] [class*="_exportBar"],
+html[data-zen="true"] [class*="chat-message-actions"],
+html[data-zen="true"] [class*="reply-copy"],
+html[data-zen="true"] .code-block-header button {
+  display: none !important;
+}
+html[data-zen="true"] [class*="window-content"] {
+  width: 100%;
+  max-width: 100%;
+}
+html[data-zen="true"] [class*="toc_"] {
+  display: none;
+}
+::highlight(campus-speech) {
+  background: #ffe58f;
+  color: #2b2200;
+}

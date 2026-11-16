@@ -6,7 +6,7 @@ import {
 } from "../config/friend-profiles";
 import { ACCESS_CODE_PREFIX, ModelProvider } from "../constant";
 
-export function auth(req: NextRequest, modelProvider: ModelProvider) {
+export async function auth(req: NextRequest, modelProvider: ModelProvider) {
   const config = getFriendAccessConfig();
   if (!config.valid) return { error: true, msg: "访问配置有误，请联系管理员" };
 
@@ -38,7 +38,7 @@ export function auth(req: NextRequest, modelProvider: ModelProvider) {
     // Keep the original CODE bearer format compatible with older clients.
     accessCode = authorization.slice(`Bearer ${ACCESS_CODE_PREFIX}`.length);
   }
-  if (!matchFriendProfile(accessCode, config)) {
+  if (!(await matchFriendProfile(accessCode, config))) {
     return { error: true, msg: "访问密码不正确或已失效，请重新登录" };
   }
   const systemApiKey = getServerSideConfig().apiKey;

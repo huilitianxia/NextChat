@@ -1,4 +1,6 @@
 "use client";
+import { effortPayload, reportEffort } from "../../utils/reasoning";
+import { useWorkspacePreferences } from "../../store/workspace-preferences";
 // azure and openai, using same models. so using same LLMApi.
 import {
   ApiPath,
@@ -33,6 +35,8 @@ import {
   getTimeoutMSByModel,
 } from "@/app/utils";
 import { fetch } from "@/app/utils/stream";
+import { assertSafePrompt } from "@/app/utils/security-guard";
+import { currentIdentity } from "@/app/utils/identity-storage";
 
 export interface OpenAIListModelResponse {
   object: string;
@@ -138,6 +142,17 @@ export class ChatGPTApi implements LLMApi {
   }
 
   async chat(options: ChatOptions) {
+    const owner = currentIdentity();
+    try {
+      assertSafePrompt(
+        options.messages
+          .map((message) => getMessageTextContent(message))
+          .join("\n"),
+      );
+    } catch (e) {
+      options.onError?.(e as Error);
+      return;
+    }
     const modelConfig = {
       ...useAppConfig.getState().modelConfig,
       ...useChatStore.getState().currentSession().mask.modelConfig,
@@ -184,6 +199,11 @@ export class ChatGPTApi implements LLMApi {
       // O1 not support image, tools (plugin in ChatGPTNextWeb) and system, stream, logprobs, temperature, top_p, n, presence_penalty, frequency_penalty yet.
       requestPayload = {
         messages,
+        ...effortPayload(
+          modelConfig.model,
+          options.config.reasoningEffort ??
+            useWorkspacePreferences.getState().effort,
+        ),
         stream: options.config.stream,
         model: modelConfig.model,
         temperature: !isO1OrO3 && !isGpt5 ? modelConfig.temperature : 1,
@@ -219,8 +239,10 @@ export class ChatGPTApi implements LLMApi {
       }
     }
 
-    console.log("[Request] openai payload: ", requestPayload);
-
+    if (owner !== currentIdentity()) {
+      options.onError?.(new Error("身份已切换，本次请求已取消。"));
+      return;
+    }
     const shouldStream = !isDalle3 && !!options.config.stream;
     const controller = new AbortController();
     options.onController?.(controller);
@@ -237,6 +259,17 @@ export class ChatGPTApi implements LLMApi {
       const chatPath = this.path(
         isDalle3 ? OpenaiPath.ImagePath : OpenaiPath.ChatPath,
       );
+      if (
+        options.config.webSearch &&
+        !isDalle3 &&
+        "messages" in requestPayload
+      ) {
+        const { searchChat } = await import("@/app/utils/web-search");
+        if (
+          await searchChat(options, requestPayload.messages as any, controller)
+        )
+          return;
+      }
       if (shouldStream) {
         let index = -1;
         // No persisted plugin may execute against this shared, serverless service.
@@ -348,6 +381,7 @@ export class ChatGPTApi implements LLMApi {
         );
 
         const res = await fetch(chatPath, chatPayload);
+        reportEffort(res, options.onEffort);
         clearTimeout(requestTimeoutId);
 
         const resJson = await res.json();

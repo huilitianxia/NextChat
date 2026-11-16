@@ -1,0 +1,17 @@
+{
+  "id": "/",
+  "name": "Campus Workspace · 校园学习工作台",
+  "short_name": "校园工作台",
+  "description": "七人专属学习与科研工作台",
+  "lang": "zh-CN",
+  "start_url": "/?source=pwa#/chat",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f1f5f5",
+  "theme_color": "#246f67",
+  "icons": [
+    { "src": "/icons/campus.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icons/campus-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/campus-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

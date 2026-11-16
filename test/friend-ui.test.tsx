@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 
 const verifyAccessCode = jest.fn<(code: string) => Promise<void>>();
@@ -30,6 +31,7 @@ jest.unstable_mockModule("react-router-dom", () => ({
 
 const { AuthPage } = await import("../app/components/auth");
 const { WelcomeCard } = await import("../app/components/welcome-card");
+const { WorkflowGrid } = await import("../app/components/workflow-grid");
 
 afterEach(() => {
   cleanup();
@@ -80,9 +82,7 @@ test("waits for successful server verification before entering chat and blocks d
 test("personalized greeting is rendered as text and the card has usable feature hints", () => {
   const { container } = render(<WelcomeCard compact />);
   expect(screen.getByText("VIP 体验官")).toBeVisible();
-  expect(
-    screen.getByRole("heading", { name: /你好，老王\s*。/ }),
-  ).toBeVisible();
+  expect(screen.getByRole("heading", { name: "你好 老王" })).toBeVisible();
   expect(screen.getByText("<script>never execute</script>")).toBeVisible();
   expect(container.querySelector("script")).toBeNull();
   expect(screen.getByText("图片、PDF、Word、文本与代码")).toBeVisible();
@@ -142,4 +142,54 @@ test("the welcome card still renders its children without exposing chat-only ins
   expect(
     screen.queryByRole("region", { name: "灵感起点" }),
   ).not.toBeInTheDocument();
+});
+
+test("workflow grid pins the major, collapses to six, and expands filters without sending", () => {
+  const onSelect = jest.fn();
+  render(<WorkflowGrid major="security" onSelect={onSelect} />);
+  const toggle = screen.getByRole("button", { name: /展开全部 14 个模板/ });
+  const cards = () =>
+    within(
+      document.getElementById(toggle.getAttribute("aria-controls")!)!,
+    ).getAllByRole("button");
+  expect(cards()).toHaveLength(6);
+  expect(cards()[0]).toHaveTextContent("防御代码审计");
+  expect(cards()[1]).toHaveTextContent("CTF 原理复盘");
+  expect(within(cards()[0]).getByText("本专业推荐")).toBeVisible();
+  fireEvent.click(toggle);
+  expect(cards()).toHaveLength(14);
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(screen.getByRole("button", { name: "电气" }));
+  expect(cards()).toHaveLength(2);
+  expect(
+    screen.queryByRole("button", { name: /收起模板/ }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("button", { name: "全部模板" }),
+  );
+  expect(cards()).toHaveLength(6);
+  expect(onSelect).not.toHaveBeenCalled();
+});
+
+test("architecture card opens a picker; selecting a valid file passes its image without auto-send", async () => {
+  const onSelect = jest.fn();
+  render(<WorkflowGrid major="architecture" onSelect={onSelect} />);
+  const input = screen.getByLabelText("选择建筑精修图片") as HTMLInputElement;
+  const click = jest.spyOn(input, "click");
+  fireEvent.click(screen.getByRole("button", { name: /建筑图像精修/ }));
+  expect(click).toHaveBeenCalledTimes(1);
+  expect(onSelect).not.toHaveBeenCalled();
+  fireEvent.change(input, {
+    target: {
+      files: [new File(["test-image"], "building.png", { type: "image/png" })],
+    },
+  });
+  await waitFor(() =>
+    expect(onSelect).toHaveBeenCalledWith(
+      "arch-edit",
+      expect.any(String),
+      expect.stringMatching(/^data:image\/png;base64,/),
+    ),
+  );
+  click.mockRestore();
 });

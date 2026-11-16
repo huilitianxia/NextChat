@@ -37,7 +37,19 @@ export async function buildConversationExport(
         }
         content = parts;
       }
-      messages.push({ ...message, content });
+      let imageRevision = message.imageRevision;
+      if (imageRevision) {
+        imageRevision = { ...imageRevision };
+        for (const key of ["before", "after"] as const) {
+          if (imageRevision[key].includes(CACHE_URL_PREFIX))
+            imageRevision[key] = await resolveImage(imageRevision[key]);
+        }
+      }
+      messages.push({
+        ...message,
+        content,
+        ...(imageRevision ? { imageRevision } : {}),
+      });
     }
     exported.push({
       id: session.id,

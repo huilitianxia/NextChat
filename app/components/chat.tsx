@@ -1,3 +1,4 @@
+import { splitReasoning, isReasoningModel } from "../utils/reasoning";
 import { useDebouncedCallback } from "use-debounce";
 import React, {
   Fragment,
@@ -57,6 +58,11 @@ import {
 
 import { uploadImage as uploadImageRemote } from "@/app/utils/chat";
 import { WelcomeCard } from "./welcome-card";
+import { useCampusUI } from "../store/campus";
+import { useFinale } from "../store/finale";
+import { useCapstone } from "../store/capstone";
+import { matchSlash } from "../utils/slash-commands";
+import finaleStyles from "./finale.module.scss";
 import {
   ATTACHMENT_ACCEPT,
   MAX_DOCUMENTS,
@@ -111,6 +117,29 @@ import { MsEdgeTTS, OUTPUT_FORMAT } from "../utils/ms_edge_tts";
 
 import { RealtimeChat } from "@/app/components/realtime-chat";
 import clsx from "clsx";
+import campusStyles from "./campus.module.scss";
+import { assertSafePrompt } from "../utils/security-guard";
+import { currentIdentity, identityStorageKey } from "../utils/identity-storage";
+import { isAudioFile, AUDIO_ACCEPT } from "../utils/audio-transcription";
+import { WORKFLOWS, WORKSPACE_QUOTES } from "../config/workflow-templates";
+const ReferenceLibrary = dynamic(() => import("./reference-library"), {
+  ssr: false,
+});
+const AudioTranscriber = dynamic(() => import("./audio-transcriber"), {
+  ssr: false,
+});
+const ImageAnnotator = dynamic(() => import("./image-annotator"), {
+  ssr: false,
+});
+const ImageComparison = dynamic(() => import("./image-comparison"), {
+  ssr: false,
+});
+const AssistantExports = dynamic(() => import("./assistant-exports"), {
+  ssr: false,
+});
+const SourceCitations = dynamic(() => import("./source-citations"), {
+  ssr: false,
+});
 
 const localStorage = safeLocalStorage();
 
@@ -416,6 +445,7 @@ function useScrollToBottom(
   // for auto-scroll
   const [autoScroll, setAutoScroll] = useState(true);
   const scrollDomToBottom = useCallback(() => {
+    if (!messages.length) return;
     const dom = scrollRef.current;
     if (dom) {
       requestAnimationFrame(() => {
@@ -423,7 +453,7 @@ function useScrollToBottom(
         dom.scrollTo(0, dom.scrollHeight);
       });
     }
-  }, [scrollRef]);
+  }, [scrollRef, messages.length]);
 
   // auto scroll
   useEffect(() => {
@@ -451,6 +481,7 @@ function useScrollToBottom(
 
 export function ChatActions(props: {
   uploadImage: () => void;
+  captureImage: (file: File) => void;
   setAttachImages: (images: string[]) => void;
   setUploading: (uploading: boolean) => void;
   showPromptModal: () => void;
@@ -475,27 +506,56 @@ export function ChatActions(props: {
     [allModels],
   );
   const currentModel = session.mask.modelConfig.model;
+  const mobile = useMobileScreen();
+  const cameraInput = useRef<HTMLInputElement>(null);
   const [showModelSelector, setShowModelSelector] = useState(false);
 
   return (
     <div className={styles["chat-input-actions"]}>
       <IconButton
         icon={props.uploading ? <LoadingButtonIcon /> : <ImageIcon />}
-        text={props.uploading ? "正在读取…" : "添加文件"}
+        text={props.uploading ? "正在读取…" : mobile ? "文件" : "添加文件"}
         aria="添加图片、PDF、Word 或文本文件"
         title="支持 .txt、.md、.csv、.json、.log、.docx、文本型 .doc，以及图片、PDF 和代码文件"
         onClick={props.uploadImage}
         disabled={props.uploading}
       />
+      {mobile && (
+        <>
+          <input
+            hidden
+            ref={cameraInput}
+            aria-label="拍照识题相机"
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) props.captureImage(file);
+            }}
+          />
+          <IconButton
+            icon={<span aria-hidden="true">⌾</span>}
+            text="拍照识题"
+            aria="拍照识题"
+            disabled={props.uploading}
+            onClick={() => cameraInput.current?.click()}
+          />
+        </>
+      )}
       <IconButton
         icon={<RobotIcon />}
         text={
-          models.find((m) => m.name === currentModel)?.displayName ||
+          (mobile && currentModel === "gpt-6.1-sol"
+            ? "6.1 Sol"
+            : models.find((m) => m.name === currentModel)?.displayName) ||
           currentModel
         }
         aria="切换模型"
         onClick={() => setShowModelSelector(true)}
       />
+      {isReasoningModel(currentModel) && <ReasoningEffortControl />}
       {ChatControllerPool.hasPending() && (
         <IconButton
           icon={<StopIcon />}
@@ -683,11 +743,63 @@ export function ShortcutKeyModal(props: { onClose: () => void }) {
   );
 }
 
+const ReasoningEffortControl = dynamic(() => import("./reasoning-effort"), {
+  ssr: false,
+});
+const ReasoningCapsule = dynamic(() => import("./reasoning-capsule"), {
+  ssr: false,
+});
+const SelectionActions = dynamic(() => import("./selection-actions"), {
+  ssr: false,
+});
+const WorkspaceTheme = dynamic(() => import("./workspace-theme"), {
+  ssr: false,
+});
+const MessageActions = dynamic(() => import("./message-actions"), {
+  ssr: false,
+});
+const TocRail = dynamic(() => import("./toc-rail"), { ssr: false });
+const ContextCompactor = dynamic(() => import("./context-compactor"), {
+  ssr: false,
+});
+const VoiceDictation = dynamic(() => import("./voice-dictation"), {
+  ssr: false,
+});
+const SlashAutocomplete = dynamic(
+  async () => (await import("./prompt-macros")).SlashAutocomplete,
+  { ssr: false },
+);
+const LocalEncoder = dynamic(() => import("./local-encoder"), { ssr: false });
+
 function _Chat() {
   type RenderMessage = ChatMessage & { preview?: boolean };
 
   const chatStore = useChatStore();
   const session = chatStore.currentSession();
+  const [libraryOpen, setLibraryOpen] = useState(false),
+    [audioOpen, setAudioOpen] = useState(false),
+    [audioFile, setAudioFile] = useState<File>(),
+    [editImage, setEditImage] = useState("");
+  const pendingImageEdit = useCampusUI((state) => state.pendingImageEdit);
+  useEffect(() => {
+    setEditImage("");
+  }, [session.id]);
+  useEffect(() => {
+    if (!pendingImageEdit) return;
+    if (
+      pendingImageEdit.owner === currentIdentity() &&
+      pendingImageEdit.sessionId === session.id
+    )
+      setEditImage(pendingImageEdit.src);
+    useCampusUI.getState().clearImageEdit();
+  }, [pendingImageEdit, session.id]);
+  const [quoteIndex, setQuoteIndex] = useState(0);
+  const originalImages = useRef(new Map<string, File>());
+  const [editSelection, setEditSelection] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setQuoteIndex((i) => i + 1), 45000);
+    return () => clearInterval(timer);
+  }, []);
   const config = useAppConfig();
   const fontSize = config.fontSize;
   const fontFamily = config.fontFamily;
@@ -696,6 +808,33 @@ function _Chat() {
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [userInput, setUserInput] = useState("");
+  const [encoderOpen, setEncoderOpen] = useState(false);
+  const originals = useMemo(() => {
+    let previous = "";
+    const result = new Map<string, string>();
+    for (const message of session.messages) {
+      if (message.role === "user") previous = getMessageTextContent(message);
+      else result.set(message.id, previous);
+    }
+    return result;
+  }, [session.messages]);
+  const pendingCommand = useCampusUI((state) => state.command);
+  useEffect(() => {
+    if (!pendingCommand) return;
+    if (pendingCommand.owner === currentIdentity()) {
+      if (pendingCommand.kind === "draft") {
+        setUserInput(pendingCommand.text);
+        requestAnimationFrame(() => inputRef.current?.focus());
+      }
+      if (pendingCommand.kind === "append") {
+        setUserInput((input) => input + pendingCommand.text);
+        requestAnimationFrame(() => inputRef.current?.focus());
+      }
+      if (pendingCommand.kind === "library") setLibraryOpen(true);
+      if (pendingCommand.kind === "encoder") setEncoderOpen(true);
+    }
+    useCampusUI.getState().clearCommand();
+  }, [pendingCommand]);
   const [isLoading, setIsLoading] = useState(false);
   const { submitKey, shouldSubmit } = useSubmitHandler();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -800,6 +939,11 @@ function _Chat() {
   const SEARCH_TEXT_LIMIT = 30;
   const onInput = (text: string) => {
     setUserInput(text);
+    if (matchSlash(text, useFinale.getState().macros).length) {
+      onSearch.cancel();
+      setPromptHints([]);
+      return;
+    }
     const n = text.trim().length;
 
     // clear search results
@@ -840,10 +984,20 @@ function _Chat() {
       matchCommand.invoke();
       return;
     }
+    try {
+      assertSafePrompt(messageWithAttachments(userInput, documents));
+    } catch (e) {
+      setAttachmentError((e as Error).message);
+      return;
+    }
     setIsLoading(true);
     chatStore
       .onUserInput(messageWithAttachments(userInput, documents), attachImages)
-      .then(() => setIsLoading(false));
+      .catch((e) => {
+        setAttachmentError((e as Error).message);
+        setUserInput(userInput);
+      })
+      .finally(() => setIsLoading(false));
     setAttachImages([]);
     imageSources.current = [];
     setDocuments([]);
@@ -1107,6 +1261,7 @@ function _Chat() {
   const [msgRenderIndex, _setMsgRenderIndex] = useState(
     Math.max(0, renderMessages.length - CHAT_PAGE_SIZE),
   );
+  const tocNavigationUntil = useRef(0);
 
   function setMsgRenderIndex(newIndex: number) {
     newIndex = Math.min(renderMessages.length - CHAT_PAGE_SIZE, newIndex);
@@ -1123,6 +1278,7 @@ function _Chat() {
   }, [msgRenderIndex, renderMessages]);
 
   const onChatBodyScroll = (e: HTMLElement) => {
+    if (Date.now() < tocNavigationUntil.current) return;
     const bottomHeight = e.scrollTop + e.clientHeight;
     const edgeThreshold = e.clientHeight;
 
@@ -1175,8 +1331,13 @@ function _Chat() {
   // remember unfinished input
   useEffect(() => {
     // try to load from local storage
-    const key = UNFINISHED_INPUT(session.id);
-    const mayBeUnfinishedInput = localStorage.getItem(key);
+    const key = identityStorageKey(UNFINISHED_INPUT(session.id));
+    const mayBeUnfinishedInput =
+      session.initialPrompt || localStorage.getItem(key);
+    if (session.initialPrompt)
+      chatStore.updateTargetSession(session, (s) => {
+        delete s.initialPrompt;
+      });
     if (mayBeUnfinishedInput && userInput.length === 0) {
       setUserInput(mayBeUnfinishedInput);
       localStorage.removeItem(key);
@@ -1201,6 +1362,11 @@ function _Chat() {
     try {
       for (const file of files.slice(0, MAX_FILES)) {
         try {
+          if (isAudioFile(file)) {
+            setAudioFile(file);
+            setAudioOpen(true);
+            continue;
+          }
           const kind = attachmentKind(file);
           if (kind === "image") {
             if (!isVisionModel(session.mask.modelConfig.model)) {
@@ -1210,7 +1376,9 @@ function _Chat() {
               throw new Error(
                 `每条消息最多添加 ${MAX_IMAGES} 张图片（含 PDF 页面）。`,
               );
-            nextImages.push(await uploadImageRemote(file));
+            const imageUrl = await uploadImageRemote(file);
+            nextImages.push(imageUrl);
+            originalImages.current.set(imageUrl, file);
             nextImageSources.push(null);
           } else {
             if (nextDocuments.length >= MAX_DOCUMENTS)
@@ -1241,6 +1409,7 @@ function _Chat() {
               id,
               name: file.name,
               text,
+              ...(/\.(csv|xlsx)$/i.test(file.name) ? { labFile: file } : {}),
               imageUrls: images.length ? images : undefined,
               notice,
             });
@@ -1344,7 +1513,7 @@ function _Chat() {
   function uploadImage() {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ATTACHMENT_ACCEPT;
+    input.accept = `${ATTACHMENT_ACCEPT},${AUDIO_ACCEPT}`;
     input.multiple = true;
     input.onchange = () => void addFiles(Array.from(input.files ?? []));
     input.click();
@@ -1435,7 +1604,82 @@ function _Chat() {
   return (
     <>
       <div className={styles.chat} key={session.id}>
-        <div className="window-header" data-tauri-drag-region>
+        <TocRail
+          messages={session.messages}
+          onNavigate={(id, heading) => {
+            setAutoScroll(false);
+            tocNavigationUntil.current = Date.now() + 1200;
+            const index = renderMessages.findIndex(
+              (message) => message.id === id,
+            );
+            if (index < 0) return;
+            setMsgRenderIndex(Math.max(0, index - CHAT_PAGE_SIZE));
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() => {
+                const element = document.getElementById(`turn-${id}`);
+                const target =
+                  heading < 0
+                    ? element
+                    : element?.querySelectorAll(
+                        ".markdown-body h1,.markdown-body h2",
+                      )[heading];
+                target?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }),
+            );
+          }}
+        />
+        <SelectionActions
+          onPrompt={(text) => {
+            onInput(text);
+            inputRef.current?.focus();
+          }}
+        />
+        {encoderOpen && <LocalEncoder onClose={() => setEncoderOpen(false)} />}
+        {libraryOpen && (
+          <ReferenceLibrary
+            key={session.id}
+            sessionId={session.id}
+            onClose={() => setLibraryOpen(false)}
+          />
+        )}
+        {audioOpen && (
+          <AudioTranscriber
+            file={audioFile}
+            onClose={() => {
+              setAudioOpen(false);
+              setAudioFile(undefined);
+            }}
+            onInsert={(text) => {
+              onInput(text);
+              inputRef.current?.focus();
+            }}
+          />
+        )}
+        {editImage && (
+          <ImageAnnotator
+            src={editImage}
+            onClose={() => setEditImage("")}
+            onComplete={(revision) => {
+              chatStore.updateTargetSession(session, (s) => {
+                s.messages = s.messages.concat(
+                  createMessage({ role: "user", content: revision.prompt }),
+                  createMessage({
+                    role: "assistant",
+                    content: "图片微调已完成，可拖动滑块比较修改前后。",
+                    model: revision.model,
+                    imageRevision: revision,
+                  }),
+                );
+                s.lastUpdate = Date.now();
+              });
+            }}
+          />
+        )}
+        <div
+          className={clsx("window-header", styles["campus-chat-header"])}
+          data-zen-hide
+          data-tauri-drag-region
+        >
           {isMobileScreen && (
             <div className="window-actions">
               <div className={"window-action-button"}>
@@ -1515,6 +1759,21 @@ function _Chat() {
             )}
           </div>
 
+          <div className={clsx(campusStyles.toolbar, styles["header-tools"])}>
+            <WorkspaceTheme />
+            <button
+              type="button"
+              aria-label="快捷命令"
+              title="Ctrl / Cmd + K"
+              onClick={() => window.dispatchEvent(new Event("campus:commands"))}
+            >
+              ⌘ K
+            </button>
+            <button onClick={() => setLibraryOpen(true)}>本会话资料库</button>
+            <button onClick={() => useFinale.getState().toggleZen()}>
+              专注阅读
+            </button>
+          </div>
           <PromptToast
             showToast={!hitBottom}
             showModal={showPromptModal}
@@ -1538,6 +1797,16 @@ function _Chat() {
               {session.messages.length === 0 && (
                 <WelcomeCard
                   compact
+                  onWorkflowSelect={(id, prompt, image) => {
+                    chatStore.updateTargetSession(session, (s) => {
+                      s.workflowId = id;
+                    });
+                    if (image) setEditImage(image);
+                    else {
+                      onInput(prompt);
+                      inputRef.current?.focus();
+                    }
+                  }}
                   onPromptSelect={(prompt) => {
                     onInput(prompt);
                     inputRef.current?.focus();
@@ -1549,6 +1818,9 @@ function _Chat() {
                 // .filter((m) => !m.isMcpResponse)
                 .map((message, i) => {
                   const isUser = message.role === "user";
+                  const reasoned = isUser
+                    ? null
+                    : splitReasoning(getMessageTextContent(message));
                   const isContext = i < context.length;
                   const showActions =
                     !(message.preview || message.content.length === 0) &&
@@ -1561,6 +1833,7 @@ function _Chat() {
                   return (
                     <Fragment key={message.id}>
                       <div
+                        id={`turn-${message.id}`}
                         className={
                           isUser
                             ? styles["chat-message-user"]
@@ -1703,9 +1976,9 @@ function _Chat() {
                               </div>
                             )}
                           </div>
-                          {message?.tools?.length == 0 && showTyping && (
+                          {!isUser && !message?.tools?.length && showTyping && (
                             <div className={styles["chat-message-status"]}>
-                              {Locale.Chat.Typing}
+                              ( •̀ ω •́ )✧ 6.1 Sol 正在疯狂转动脑筋...
                             </div>
                           )}
                           {/*@ts-ignore*/}
@@ -1729,10 +2002,33 @@ function _Chat() {
                               ))}
                             </div>
                           )}
-                          <div className={styles["chat-message-item"]}>
+                          <div
+                            className={styles["chat-message-item"]}
+                            data-assistant-message={
+                              !isUser ? message.id : undefined
+                            }
+                          >
+                            {reasoned &&
+                              (reasoned.reasoning || reasoned.thinking) && (
+                                <ReasoningCapsule
+                                  text={reasoned.reasoning}
+                                  thinking={
+                                    !!message.streaming && reasoned.thinking
+                                  }
+                                  startedAt={message.reasoningStartedAt}
+                                  durationMs={message.reasoningDurationMs}
+                                  effort={message.reasoningEffort}
+                                  fallback={message.reasoningFallback}
+                                  model={message.model}
+                                />
+                              )}
                             <Markdown
                               key={message.streaming ? "loading" : "done"}
-                              content={getMessageTextContent(message)}
+                              content={
+                                reasoned
+                                  ? reasoned.answer
+                                  : getMessageTextContent(message)
+                              }
                               loading={
                                 (message.preview || message.streaming) &&
                                 message.content.length === 0 &&
@@ -1748,6 +2044,50 @@ function _Chat() {
                               parentRef={scrollRef}
                               defaultShow={i >= messages.length - 6}
                             />
+                            {!isUser && !message.preview && (
+                              <>
+                                <SourceCitations
+                                  sessionId={session.id}
+                                  sources={message.sources}
+                                  links={message.webSources}
+                                />
+                                {message.searchNotice && (
+                                  <p className={campusStyles.notice}>
+                                    {message.searchNotice}
+                                  </p>
+                                )}
+                                {message.imageRevision && (
+                                  <ImageComparison
+                                    revision={message.imageRevision}
+                                    onEdit={() =>
+                                      setEditImage(message.imageRevision!.after)
+                                    }
+                                  />
+                                )}
+                                {!message.streaming && !message.isError && (
+                                  <AssistantExports
+                                    content={
+                                      reasoned?.answer ??
+                                      getMessageTextContent(message)
+                                    }
+                                  />
+                                )}
+                              </>
+                            )}
+                            {showActions &&
+                              !message.streaming &&
+                              !message.isError && (
+                                <MessageActions
+                                  key={message.id}
+                                  messageId={message.id}
+                                  content={
+                                    reasoned?.answer ??
+                                    getMessageTextContent(message)
+                                  }
+                                  original={originals.get(message.id)}
+                                  assistant={!isUser}
+                                />
+                              )}
                             {getMessageImages(message).length == 1 && (
                               <img
                                 className={styles["chat-message-item-image"]}
@@ -1828,6 +2168,7 @@ function _Chat() {
               className={clsx(styles["chat-input-panel"], {
                 [styles["drop-active"]]: dragging,
               })}
+              data-zen-hide
               onDragEnter={(event) => {
                 if (!event.dataTransfer.types.includes("Files")) return;
                 event.preventDefault();
@@ -1882,6 +2223,16 @@ function _Chat() {
                   {documents.map((document) => (
                     <div key={document.id} className={styles["document-chip"]}>
                       <span title={document.name}>{document.name}</span>
+                      {document.labFile && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            useCapstone.setState({ file: document.labFile! })
+                          }
+                        >
+                          数据预览与拟合
+                        </button>
+                      )}
                       <button
                         type="button"
                         aria-label={`移除 ${document.name}`}
@@ -1894,34 +2245,152 @@ function _Chat() {
                   ))}
                 </div>
               )}
+              <ContextCompactor key={session.id} session={session} />
+              <SlashAutocomplete
+                input={userInput}
+                onSelect={(text) => {
+                  setUserInput(text);
+                  setPromptHints([]);
+                  inputRef.current?.focus();
+                }}
+              />
               <PromptHints
                 prompts={promptHints}
                 onPromptSelect={onPromptSelect}
               />
 
-              <ChatActions
-                uploadImage={uploadImage}
-                setAttachImages={setAttachImages}
-                setUploading={setUploading}
-                showPromptModal={() => setShowPromptModal(true)}
-                scrollToBottom={scrollToBottom}
-                hitBottom={hitBottom}
-                uploading={uploading}
-                showPromptHints={() => {
-                  // Click again to close
-                  if (promptHints.length > 0) {
-                    setPromptHints([]);
-                    return;
-                  }
+              <div className={styles["composer-tools"]}>
+                <ChatActions
+                  uploadImage={uploadImage}
+                  captureImage={(file) => {
+                    void addFiles([file]);
+                  }}
+                  setAttachImages={setAttachImages}
+                  setUploading={setUploading}
+                  showPromptModal={() => setShowPromptModal(true)}
+                  scrollToBottom={scrollToBottom}
+                  hitBottom={hitBottom}
+                  uploading={uploading}
+                  showPromptHints={() => {
+                    // Click again to close
+                    if (promptHints.length > 0) {
+                      setPromptHints([]);
+                      return;
+                    }
 
-                  inputRef.current?.focus();
-                  setUserInput("/");
-                  onSearch("");
-                }}
-                setShowShortcutKeyModal={setShowShortcutKeyModal}
-                setUserInput={setUserInput}
-                setShowChatSidePanel={setShowChatSidePanel}
-              />
+                    inputRef.current?.focus();
+                    setUserInput("/");
+                    onSearch("");
+                  }}
+                  setShowShortcutKeyModal={setShowShortcutKeyModal}
+                  setUserInput={setUserInput}
+                  setShowChatSidePanel={setShowChatSidePanel}
+                />
+                <div
+                  className={clsx(
+                    campusStyles.toolbar,
+                    styles["composer-campus-tools"],
+                  )}
+                >
+                  <div className={finaleStyles.composerTools}>
+                    <button
+                      type="button"
+                      onClick={() => useFinale.getState().open("equations")}
+                    >
+                      ƒ 公式草稿本
+                    </button>
+                    <VoiceDictation
+                      key={session.id}
+                      onInsert={(text) => {
+                        setUserInput(
+                          (input) =>
+                            input +
+                            (input && !/\s$/.test(input) ? " " : "") +
+                            text,
+                        );
+                      }}
+                    />
+                  </div>
+                  {attachImages.length > 1 && (
+                    <select
+                      aria-label="选择精修图片"
+                      value={Math.min(editSelection, attachImages.length - 1)}
+                      onChange={(e) => setEditSelection(Number(e.target.value))}
+                    >
+                      {attachImages.map((_, i) => (
+                        <option value={i} key={i}>
+                          图片 {i + 1}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <button
+                    type="button"
+                    aria-pressed={session.webSearch === true}
+                    onClick={() =>
+                      chatStore.updateTargetSession(session, (s) => {
+                        s.webSearch = !s.webSearch;
+                      })
+                    }
+                  >
+                    联网检索{session.webSearch ? " · 开" : ""}
+                  </button>
+                  <button type="button" onClick={() => setAudioOpen(true)}>
+                    音频转文字
+                  </button>
+                  {attachImages.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const source =
+                            attachImages[
+                              Math.min(editSelection, attachImages.length - 1)
+                            ],
+                          original = originalImages.current.get(source);
+                        if (!original) {
+                          setEditImage(source);
+                          return;
+                        }
+                        const owner = currentIdentity();
+                        try {
+                          const data = await new Promise<string>(
+                            (resolve, reject) => {
+                              const reader = new FileReader();
+                              reader.onload = () =>
+                                resolve(String(reader.result));
+                              reader.onerror = () =>
+                                reject(new Error("原图读取失败"));
+                              reader.readAsDataURL(original);
+                            },
+                          );
+                          if (owner === currentIdentity() && mounted.current)
+                            setEditImage(data);
+                        } catch (e) {
+                          setAttachmentError((e as Error).message);
+                        }
+                      }}
+                    >
+                      图片精修模式
+                    </button>
+                  )}
+                  {session.workflowId && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        chatStore.updateTargetSession(session, (s) => {
+                          s.workflowId = undefined;
+                        })
+                      }
+                    >
+                      {
+                        WORKFLOWS.find((flow) => flow.id === session.workflowId)
+                          ?.title
+                      }{" "}
+                      ×
+                    </button>
+                  )}
+                </div>
+              </div>
               <label
                 className={clsx(styles["chat-input-panel-inner"], {
                   [styles["chat-input-panel-inner-attach"]]:
@@ -1933,7 +2402,9 @@ function _Chat() {
                   id="chat-input"
                   ref={inputRef}
                   className={styles["chat-input"]}
-                  placeholder="写下你的问题，或拖入图片、PDF、Word、文本与代码文件…"
+                  placeholder={
+                    WORKSPACE_QUOTES[quoteIndex % WORKSPACE_QUOTES.length]
+                  }
                   aria-label="消息输入框"
                   onInput={(e) => onInput(e.currentTarget.value)}
                   value={userInput}

@@ -1,0 +1,106 @@
+:root[data-theme="light"] {
+  @include light;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  @include dark;
+  color-scheme: dark;
+}
+:root[data-palette="blue"][data-theme="light"] {
+  --primary: #326b97;
+  --on-primary: #fff;
+  --second: #e7eff7;
+  --gray: #edf3f8;
+  --surface-soft: #f3f7fb;
+  --black: #20364e;
+  --text-secondary: #526c83;
+  --muted: #607990;
+  --hover-color: #e6eef7;
+  --line: #315a7c24;
+}
+:root[data-palette="blue"][data-theme="dark"] {
+  --primary: #8ecbfa;
+  --on-primary: #102a40;
+  --second: #1a3652;
+  --white: #15263a;
+  --black: #e4f0fc;
+  --gray: #0e1b2b;
+  --surface-raised: #1a2d43;
+  --surface-soft: #132337;
+  --text-secondary: #b3c9df;
+  --muted: #9fb8d0;
+  --hover-color: #233c56;
+  --glass: #15263aeb;
+  --line: #9bc8ee26;
+}
+:root[data-palette="purple"][data-theme="light"] {
+  --primary: #735796;
+  --on-primary: #fff;
+  --second: #eee9f5;
+  --gray: #f1eef6;
+  --surface-soft: #f7f4fa;
+  --black: #352c46;
+  --text-secondary: #6b5b7d;
+  --muted: #766787;
+  --hover-color: #ece6f5;
+  --line: #69518024;
+}
+:root[data-palette="purple"][data-theme="dark"] {
+  --primary: #c5abf0;
+  --on-primary: #2d2041;
+  --second: #352747;
+  --white: #241d31;
+  --black: #f0e8fb;
+  --gray: #181320;
+  --surface-raised: #2c233b;
+  --surface-soft: #211a2d;
+  --text-secondary: #c5b6d7;
+  --muted: #b7a5cc;
+  --hover-color: #3b2e4d;
+  --glass: #241d31ed;
+  --line: #c5abf026;
+}
+:root[data-palette="paper"][data-theme="light"] {
+  --primary: #87613d;
+  --on-primary: #fffaf1;
+  --second: #efe5d4;
+  --white: #fffaf1;
+  --black: #3d3429;
+  --gray: #f1eadf;
+  --surface-raised: #fffcf5;
+  --surface-soft: #f7f0e5;
+  --text-secondary: #77644e;
+  --muted: #83715c;
+  --hover-color: #efe3d0;
+  --glass: #fffaf1eb;
+  --line: #846b4e24;
+}
+:root[data-palette="paper"][data-theme="dark"] {
+  --primary: #dcbc8f;
+  --on-primary: #32271a;
+  --second: #403427;
+  --white: #2b261f;
+  --black: #f3e8d8;
+  --gray: #1e1a15;
+  --surface-raised: #342d24;
+  --surface-soft: #272119;
+  --text-secondary: #c9bba7;
+  --muted: #b7a68e;
+  --hover-color: #44392b;
+  --glass: #2b261fed;
+  --line: #dcbc8f26;
+}
+:root[data-theme] {
+  --theme-color: var(--gray);
+}
+:root[data-theme] div:not(.no-dark) > svg {
+  filter: none;
+}
+@media (display-mode: standalone) and (max-width: 600px) {
+  body {
+    min-height: 100dvh;
+  }
+  .window-header {
+    padding-top: calc(12px + env(safe-area-inset-top));
+  }
+}

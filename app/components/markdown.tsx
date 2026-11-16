@@ -26,6 +26,8 @@ import { IconButton } from "./button";
 
 import { useAppConfig } from "../store/config";
 import clsx from "clsx";
+import dynamic from "next/dynamic";
+const CodeTools = dynamic(() => import("./code-tools"), { ssr: false });
 
 export function Mermaid(props: { code: string }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -74,6 +76,23 @@ export function Mermaid(props: { code: string }) {
 }
 
 export function PreCode(props: { children: any }) {
+  const blockChild = React.Children.toArray(props.children).find((child) =>
+    React.isValidElement<{ className?: string }>(child),
+  );
+  const rawLanguage = React.isValidElement<{ className?: string }>(blockChild)
+    ? blockChild.props.className?.match(/language-([^\s]+)/)?.[1] || ""
+    : "";
+  const textOf = (node: React.ReactNode): string =>
+    React.Children.toArray(node)
+      .map((child) =>
+        typeof child === "string" || typeof child === "number"
+          ? String(child)
+          : React.isValidElement<{ children?: React.ReactNode }>(child)
+          ? textOf(child.props.children)
+          : "",
+      )
+      .join("");
+  const blockText = textOf(props.children).replace(/\n$/, "");
   const ref = useRef<HTMLPreElement>(null);
   const previewRef = useRef<HTMLPreviewHandler>(null);
   const [mermaidCode, setMermaidCode] = useState("");
@@ -181,7 +200,7 @@ export function PreCode(props: { children: any }) {
 
   return (
     <>
-      <div className="code-block">
+      <div className="code-block" hidden={rawLanguage.toLowerCase() === "quiz"}>
         <div className="code-block-header">
           <span className="code-block-language">{language}</span>
           <button
@@ -209,6 +228,7 @@ export function PreCode(props: { children: any }) {
         </div>
         <pre ref={ref}>{props.children}</pre>
       </div>
+      <CodeTools language={rawLanguage} code={blockText} />
       {mermaidCode.length > 0 && (
         <Mermaid code={mermaidCode} key={mermaidCode} />
       )}
