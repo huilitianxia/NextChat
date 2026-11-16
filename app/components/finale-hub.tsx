@@ -1,23 +1,29 @@
 "use client";
+import { lazyModal } from "./lazy-modal";
+
 import { useEffect } from "react";
 import dynamic from "next/dynamic";
 import { useFinale } from "../store/finale";
 import { useCapstone } from "../store/capstone";
 import styles from "./finale.module.scss";
-const CitationFormatter = dynamic(() => import("./citation-formatter"), {
-  ssr: false,
-});
-const EquationScratchpad = dynamic(() => import("./equation-scratchpad"), {
-  ssr: false,
-});
-const DisciplineToolbox = dynamic(() => import("./discipline-toolbox"), {
-  ssr: false,
-});
-const PromptMacros = dynamic(() => import("./prompt-macros"), { ssr: false });
-const KnowledgeVault = dynamic(() => import("./knowledge-vault"), {
-  ssr: false,
-});
-const CurveFitter = dynamic(() => import("./curve-fitter"), { ssr: false });
+const CitationFormatter = lazyModal(
+  () => import("./citation-formatter"),
+  "参考文献格式化器",
+);
+const EquationScratchpad = lazyModal(
+  () => import("./equation-scratchpad"),
+  "公式草稿本",
+);
+const DisciplineToolbox = lazyModal(
+  () => import("./discipline-toolbox"),
+  "专业百宝箱",
+);
+const PromptMacros = lazyModal(
+  () => import("./prompt-macros"),
+  "个人快捷指令库",
+);
+const KnowledgeVault = lazyModal(() => import("./knowledge-vault"), "知识手账");
+const CurveFitter = lazyModal(() => import("./curve-fitter"), "实验数据拟合台");
 const SpeechPlayer = dynamic(() => import("./speech-player"), { ssr: false });
 export default function FinaleHub() {
   const { tool, zen, open, toggleZen } = useFinale();

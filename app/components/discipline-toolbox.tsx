@@ -26,6 +26,12 @@ import {
   CipherWaterfall,
   ArchitectureReference,
 } from "./toolbox-vol2";
+import JuniorMedical from "./junior-medical";
+import JuniorChemistry from "./junior-chemistry";
+import JuniorElectrical from "./junior-electrical";
+import JuniorArchitecture from "./junior-architecture";
+import JuniorSystems from "./junior-systems";
+import JuniorCrypto from "./junior-crypto";
 function Field({
   label,
   value,
@@ -760,19 +766,18 @@ export default function DisciplineToolbox({
 }: {
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState("arch");
+  const [tab, setTab] = useState("medical");
   return (
     <CampusDialog title="专业百宝箱" onClose={onClose}>
       <div className={styles.tools}>
         <div className={styles.tabs} role="tablist" aria-label="专业计算器">
           {[
-            ["arch", "建筑速算"],
-            ["ee", "电路速算"],
-            ["chem", "化学速算"],
-            ["cs", "计科 / 网安"],
-            ["algorithms", "算法步进演示"],
-            ["ciphers", "密码识别瀑布"],
-            ["codes", "建筑规范速查"],
+            ["medical", "临床医学"],
+            ["chem", "化学化工"],
+            ["ee", "电气工程"],
+            ["arch", "建筑设计"],
+            ["cs", "计算机科学"],
+            ["security", "网络安全"],
           ].map(([id, label]) => (
             <button
               key={id}
@@ -784,21 +789,57 @@ export default function DisciplineToolbox({
             </button>
           ))}
         </div>
-        <div role="tabpanel">
-          {tab === "algorithms" ? (
-            <AlgorithmVisualizer />
-          ) : tab === "ciphers" ? (
-            <CipherWaterfall />
-          ) : tab === "codes" ? (
-            <ArchitectureReference />
-          ) : tab === "arch" ? (
-            <Architecture />
-          ) : tab === "ee" ? (
-            <Electrical />
+        <div role="tabpanel" key={tab}>
+          {tab === "medical" ? (
+            <JuniorMedical />
           ) : tab === "chem" ? (
-            <Chemistry />
+            <>
+              <JuniorChemistry />
+              <details>
+                <summary>元素周期表与基础化学速算</summary>
+                <Chemistry />
+              </details>
+            </>
+          ) : tab === "ee" ? (
+            <>
+              <JuniorElectrical />
+              <details>
+                <summary>电阻色环与 RC / RLC / 运放</summary>
+                <Electrical />
+              </details>
+            </>
+          ) : tab === "arch" ? (
+            <>
+              <JuniorArchitecture />
+              <details>
+                <summary>楼梯 / 坡道 / 停车规范交互检查</summary>
+                <ArchitectureReference />
+              </details>
+              <details>
+                <summary>基础建筑速算与用地指标</summary>
+                <Architecture />
+              </details>
+            </>
+          ) : tab === "cs" ? (
+            <>
+              <JuniorSystems />
+              <details>
+                <summary>BST / Dijkstra / QuickSort 算法步进演示</summary>
+                <AlgorithmVisualizer />
+              </details>
+              <details>
+                <summary>正则、CIDR 与二进制位翻转</summary>
+                <ComputerScience />
+              </details>
+            </>
           ) : (
-            <ComputerScience />
+            <>
+              <JuniorCrypto />
+              <details>
+                <summary>密码识别瀑布与 JWT 检查</summary>
+                <CipherWaterfall />
+              </details>
+            </>
           )}
         </div>
       </div>

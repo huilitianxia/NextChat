@@ -1,4 +1,8 @@
-export async function renderedPng(node: HTMLElement, scale = 2): Promise<Blob> {
+export async function renderedPng(
+  node: HTMLElement,
+  scale = 2,
+  options: { transparent?: boolean } = {},
+): Promise<Blob> {
   const { toBlob } = await import("html-to-image");
   await document.fonts.ready;
   const width = Math.ceil(node.scrollWidth),
@@ -15,16 +19,20 @@ export async function renderedPng(node: HTMLElement, scale = 2): Promise<Blob> {
     pixelRatio: scale,
     width,
     height,
-    backgroundColor:
-      getComputedStyle(document.documentElement)
-        .getPropertyValue("--white")
-        .trim() || "#fff",
+    backgroundColor: options.transparent
+      ? undefined
+      : getComputedStyle(document.documentElement)
+          .getPropertyValue("--white")
+          .trim() || "#fff",
     filter: (el) =>
       !(
         el instanceof HTMLElement &&
         el.matches("button,input,textarea,select,[data-export-hide]")
       ),
     style: {
+      ...(options.transparent
+        ? { backgroundColor: "transparent", color: "#111111" }
+        : {}),
       maxHeight: "none",
       overflow: "visible",
       height: height + "px",

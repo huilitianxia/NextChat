@@ -1,3 +1,4 @@
+import { lazyModal } from "./lazy-modal";
 import {
   useWorkspacePreferences,
   AppearanceMode,
@@ -16,8 +17,8 @@ import ExportIcon from "../icons/export.svg";
 import ClearIcon from "../icons/clear.svg";
 import styles from "./settings.module.scss";
 import dynamic from "next/dynamic";
-const LegacyData = dynamic(() => import("./legacy-data"), { ssr: false });
-const VaultBackup = dynamic(() => import("./vault-backup"), { ssr: false });
+const LegacyData = lazyModal(() => import("./legacy-data"), "旧版数据");
+const VaultBackup = lazyModal(() => import("./vault-backup"), "加密漫游包");
 const CapabilityCheck = dynamic(() => import("./capability-check"), {
   ssr: false,
 });

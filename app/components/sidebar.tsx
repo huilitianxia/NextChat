@@ -1,3 +1,4 @@
+import { lazyModal } from "./lazy-modal";
 import React, { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import styles from "./home.module.scss";
@@ -30,10 +31,7 @@ import clsx from "clsx";
 const ChatList = dynamic(async () => (await import("./chat-list")).ChatList, {
   loading: () => null,
 });
-const WorkspaceTheme = dynamic(() => import("./workspace-theme"), {
-  ssr: false,
-});
-const LocalEncoder = dynamic(() => import("./local-encoder"), { ssr: false });
+const LocalEncoder = lazyModal(() => import("./local-encoder"), "本地编码工具");
 
 export function useHotKey() {
   const chatStore = useChatStore();
@@ -236,15 +234,6 @@ export function SideBar(props: { className?: string }) {
         logo={<NextChatIcon />}
         shouldNarrow={shouldNarrow}
       >
-        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <WorkspaceTheme />
-          <IconButton
-            icon={<span aria-hidden="true">⌘</span>}
-            text="K"
-            aria="快捷命令"
-            onClick={() => window.dispatchEvent(new Event("campus:commands"))}
-          />
-        </div>
         <div className={styles["sidebar-header-bar"]}>
           <IconButton
             icon={<AddIcon />}

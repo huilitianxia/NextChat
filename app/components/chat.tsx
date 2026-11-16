@@ -1,3 +1,6 @@
+import { ContextMeter } from "./context-meter";
+import juniorStyles from "./junior.module.scss";
+import { lazyModal } from "./lazy-modal";
 import { splitReasoning, isReasoningModel } from "../utils/reasoning";
 import { useDebouncedCallback } from "use-debounce";
 import React, {
@@ -122,15 +125,18 @@ import { assertSafePrompt } from "../utils/security-guard";
 import { currentIdentity, identityStorageKey } from "../utils/identity-storage";
 import { isAudioFile, AUDIO_ACCEPT } from "../utils/audio-transcription";
 import { WORKFLOWS, WORKSPACE_QUOTES } from "../config/workflow-templates";
-const ReferenceLibrary = dynamic(() => import("./reference-library"), {
-  ssr: false,
-});
-const AudioTranscriber = dynamic(() => import("./audio-transcriber"), {
-  ssr: false,
-});
-const ImageAnnotator = dynamic(() => import("./image-annotator"), {
-  ssr: false,
-});
+const ReferenceLibrary = lazyModal(
+  () => import("./reference-library"),
+  "本会话资料库",
+);
+const AudioTranscriber = lazyModal(
+  () => import("./audio-transcriber"),
+  "音频转文字",
+);
+const ImageAnnotator = lazyModal(
+  () => import("./image-annotator"),
+  "图片精修画布",
+);
 const ImageComparison = dynamic(() => import("./image-comparison"), {
   ssr: false,
 });
@@ -759,9 +765,10 @@ const MessageActions = dynamic(() => import("./message-actions"), {
   ssr: false,
 });
 const TocRail = dynamic(() => import("./toc-rail"), { ssr: false });
-const ContextCompactor = dynamic(() => import("./context-compactor"), {
-  ssr: false,
-});
+const ContextCompactor = lazyModal(
+  () => import("./context-compactor"),
+  "浓缩前文",
+);
 const VoiceDictation = dynamic(() => import("./voice-dictation"), {
   ssr: false,
 });
@@ -769,7 +776,7 @@ const SlashAutocomplete = dynamic(
   async () => (await import("./prompt-macros")).SlashAutocomplete,
   { ssr: false },
 );
-const LocalEncoder = dynamic(() => import("./local-encoder"), { ssr: false });
+const LocalEncoder = lazyModal(() => import("./local-encoder"), "本地编码工具");
 
 function _Chat() {
   type RenderMessage = ChatMessage & { preview?: boolean };
@@ -960,8 +967,9 @@ function _Chat() {
     }
   };
 
+  const preparing = useRef(false);
   const doSubmit = (userInput: string) => {
-    if (uploadInProgress.current) return;
+    if (uploadInProgress.current || preparing.current) return;
     if (userInput.trim() === "" && !attachImages.length && !documents.length)
       return;
     if (attachImages.length && !isVisionModel(session.mask.modelConfig.model)) {
@@ -991,13 +999,30 @@ function _Chat() {
       return;
     }
     setIsLoading(true);
+    preparing.current = true;
+    const sentOwner = currentIdentity(),
+      sentSession = session.id;
+    const savedImages = [...attachImages],
+      savedDocuments = [...documents],
+      savedSources = [...imageSources.current];
     chatStore
       .onUserInput(messageWithAttachments(userInput, documents), attachImages)
       .catch((e) => {
+        if (
+          sentOwner !== currentIdentity() ||
+          useChatStore.getState().currentSession().id !== sentSession
+        )
+          return;
         setAttachmentError((e as Error).message);
         setUserInput(userInput);
+        setAttachImages(savedImages);
+        setDocuments(savedDocuments);
+        imageSources.current = savedSources;
       })
-      .finally(() => setIsLoading(false));
+      .finally(() => {
+        preparing.current = false;
+        setIsLoading(false);
+      });
     setAttachImages([]);
     imageSources.current = [];
     setDocuments([]);
@@ -1344,8 +1369,13 @@ function _Chat() {
     }
 
     const dom = inputRef.current;
+    const saveDraft = () => localStorage.setItem(key, dom?.value ?? "");
+    window.addEventListener("campus:before-reload", saveDraft);
+    window.addEventListener("beforeunload", saveDraft);
     return () => {
-      localStorage.setItem(key, dom?.value ?? "");
+      saveDraft();
+      window.removeEventListener("campus:before-reload", saveDraft);
+      window.removeEventListener("beforeunload", saveDraft);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2373,24 +2403,36 @@ function _Chat() {
                       图片精修模式
                     </button>
                   )}
-                  {session.workflowId && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        chatStore.updateTargetSession(session, (s) => {
-                          s.workflowId = undefined;
-                        })
-                      }
-                    >
-                      {
-                        WORKFLOWS.find((flow) => flow.id === session.workflowId)
-                          ?.title
-                      }{" "}
-                      ×
-                    </button>
-                  )}
+                  <ContextMeter
+                    session={session}
+                    content={messageWithAttachments(userInput, documents)}
+                    images={attachImages}
+                    revision={libraryOpen}
+                  />
                 </div>
               </div>
+              {session.workflowId && (
+                <div className={juniorStyles.specialist}>
+                  <span>
+                    🎯 专攻：
+                    {
+                      WORKFLOWS.find((flow) => flow.id === session.workflowId)
+                        ?.title
+                    }
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="解除专攻锁定"
+                    onClick={() =>
+                      chatStore.updateTargetSession(session, (s) => {
+                        s.workflowId = undefined;
+                      })
+                    }
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
               <label
                 className={clsx(styles["chat-input-panel-inner"], {
                   [styles["chat-input-panel-inner-attach"]]:
@@ -2462,7 +2504,7 @@ function _Chat() {
                   className={styles["chat-input-send"]}
                   type="primary"
                   onClick={() => doSubmit(userInput)}
-                  disabled={uploading}
+                  disabled={uploading || isLoading}
                   aria="发送消息"
                 />
               </label>

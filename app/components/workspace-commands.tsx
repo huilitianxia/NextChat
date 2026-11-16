@@ -92,15 +92,15 @@ export default function WorkspaceCommands() {
         MAJOR_LABELS[flow.major]
       } 模板`,
       run: () => {
-        if (flow.id === "arch-edit") {
-          image.current?.click();
-          return;
-        }
         const store = useChatStore.getState();
         if (store.currentSession().messages.length) store.newSession();
         store.updateTargetSession(store.currentSession(), (session) => {
           session.workflowId = flow.id;
         });
+        if (flow.id === "arch-edit") {
+          image.current?.click();
+          return;
+        }
         useCampusUI.getState().dispatch({ kind: "draft", text: flow.prompt });
         navigate(Path.Chat);
         setOpen(false);

@@ -1,5 +1,6 @@
 import type { ChatSession } from "../store/chat";
 import { CACHE_URL_PREFIX } from "../constant";
+import { activeSummary, historyDigest } from "./context-compaction";
 
 /** Include cached attachments, but never export access state or provider credentials. */
 export async function buildConversationExport(
@@ -51,12 +52,28 @@ export async function buildConversationExport(
         ...(imageRevision ? { imageRevision } : {}),
       });
     }
+    const compacted = activeSummary(session);
     exported.push({
       id: session.id,
       topic: session.topic,
       messages,
       memoryPrompt: session.memoryPrompt,
       lastUpdate: session.lastUpdate,
+      workflowId: session.workflowId,
+      contextWindow: session.contextWindow,
+      autoCompact: session.autoCompact,
+      clearContextIndex: session.clearContextIndex,
+      contextSummary: compacted
+        ? {
+            ...compacted.summary,
+            digest: historyDigest(
+              messages.slice(
+                compacted.summary.startIndex,
+                compacted.through + 1,
+              ),
+            ),
+          }
+        : undefined,
     });
   }
   return {

@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router-dom";
+import { useRef } from "react";
 import { Path } from "../constant";
 import { useChatStore } from "../store";
 import { IconButton } from "./button";
@@ -9,6 +10,7 @@ import AddIcon from "../icons/add.svg";
 import styles from "./new-chat.module.scss";
 
 export function NewChat() {
+  const imageSession = useRef<string>();
   const navigate = useNavigate();
   const newSession = useChatStore((state) => state.newSession);
   return (
@@ -24,12 +26,24 @@ export function NewChat() {
       <div className={styles.content}>
         <WelcomeCard
           onWorkflowSelect={(id, prompt, image) => {
-            newSession();
+            if (
+              !(
+                id === "arch-edit" &&
+                image &&
+                imageSession.current ===
+                  useChatStore.getState().currentSession().id
+              )
+            )
+              newSession();
             const store = useChatStore.getState();
             store.updateTargetSession(store.currentSession(), (session) => {
               session.workflowId = id;
               if (!image) session.initialPrompt = prompt;
             });
+            if (id === "arch-edit" && !image) {
+              imageSession.current = store.currentSession().id;
+              return;
+            }
             if (image)
               useCampusUI
                 .getState()

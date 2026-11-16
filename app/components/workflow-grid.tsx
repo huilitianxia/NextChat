@@ -95,8 +95,10 @@ export function WorkflowGrid({
             key={flow.id}
             type="button"
             onClick={() => {
-              if (flow.id === "arch-edit") imagePicker.current?.click();
-              else onSelect(flow.id, flow.prompt);
+              if (flow.id === "arch-edit") {
+                onSelect(flow.id, flow.prompt);
+                imagePicker.current?.click();
+              } else onSelect(flow.id, flow.prompt);
             }}
           >
             <strong>{flow.title}</strong>

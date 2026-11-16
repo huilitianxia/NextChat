@@ -418,6 +418,14 @@
     }
   }
 }
+@media (min-width: 901px) and (max-height: 760px) {
+  .quote {
+    padding-block: 6px;
+  }
+  .workflows button {
+    padding: 9px;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .workflows button {
     transition: none;

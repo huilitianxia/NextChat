@@ -1,4 +1,5 @@
 "use client";
+import { lazyModal } from "./lazy-modal";
 
 require("../polyfill");
 
@@ -57,17 +58,20 @@ const Chat = dynamic(async () => (await import("./chat")).Chat, {
 const NewChat = dynamic(async () => (await import("./new-chat")).NewChat, {
   loading: () => <Loading noLogo />,
 });
-const WorkspaceCommands = dynamic(() => import("./workspace-commands"), {
-  ssr: false,
-});
-const ArtifactPreview = dynamic(() => import("./artifact-preview"), {
-  ssr: false,
-});
-const FinaleHub = dynamic(() => import("./finale-hub"), { ssr: false });
-const PdfSplitViewer = dynamic(() => import("./pdf-split-viewer"), {
-  ssr: false,
-});
-const SharedPreview = dynamic(() => import("./shared-preview"), { ssr: false });
+const WorkspaceCommands = lazyModal(
+  () => import("./workspace-commands"),
+  "快捷命令",
+);
+const ArtifactPreview = lazyModal(
+  () => import("./artifact-preview"),
+  "成果预览",
+);
+const FinaleHub = lazyModal(() => import("./finale-hub"), "学习工具");
+const PdfSplitViewer = lazyModal(
+  () => import("./pdf-split-viewer"),
+  "PDF 分屏精读器",
+);
+const SharedPreview = lazyModal(() => import("./shared-preview"), "分享预览");
 
 export function useSwitchTheme() {
   const { mode, palette } = useWorkspacePreferences();

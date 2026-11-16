@@ -1,6 +1,13 @@
 import { KnowledgeNote, validateNote } from "./knowledge-vault";
 import { PromptMacro, validateMacros } from "./slash-commands";
+import { specialistId } from "../config/workflow-specialists";
+import { ContextSummary, normalizeSummary } from "./context-compaction";
 export type PortableSession = {
+  workflowId?: string;
+  contextWindow?: 1000000 | 256000;
+  autoCompact?: boolean;
+  clearContextIndex?: number;
+  contextSummary?: ContextSummary;
   id: string;
   topic: string;
   messages: any[];
@@ -148,6 +155,23 @@ export function validateStudyPayload(value: any): StudyPayload {
           ? s.memoryPrompt.slice(0, 60000)
           : "",
       lastUpdate: Number.isFinite(s.lastUpdate) ? s.lastUpdate : 0,
+      ...(specialistId(s.workflowId)
+        ? { workflowId: specialistId(s.workflowId) }
+        : {}),
+      ...([1000000, 256000].includes(s.contextWindow)
+        ? { contextWindow: s.contextWindow }
+        : {}),
+      ...(typeof s.autoCompact === "boolean"
+        ? { autoCompact: s.autoCompact }
+        : {}),
+      ...(Number.isInteger(s.clearContextIndex) &&
+      s.clearContextIndex >= 0 &&
+      s.clearContextIndex <= messages.length
+        ? { clearContextIndex: s.clearContextIndex }
+        : {}),
+      ...(normalizeSummary(s.contextSummary)
+        ? { contextSummary: normalizeSummary(s.contextSummary) }
+        : {}),
     };
   });
   const notes = value.notes.map((n: any) => {

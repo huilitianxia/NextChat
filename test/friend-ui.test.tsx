@@ -164,21 +164,20 @@ test("workflow grid pins the major, collapses to six, and expands filters withou
   expect(
     screen.queryByRole("button", { name: /收起模板/ }),
   ).not.toBeInTheDocument();
-  fireEvent.click(
-    screen.getByRole("button", { name: "全部模板" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "全部模板" }));
   expect(cards()).toHaveLength(6);
   expect(onSelect).not.toHaveBeenCalled();
 });
 
-test("architecture card opens a picker; selecting a valid file passes its image without auto-send", async () => {
+test("architecture card locks its specialist before opening the picker; selecting a valid file passes its image without auto-send", async () => {
   const onSelect = jest.fn();
   render(<WorkflowGrid major="architecture" onSelect={onSelect} />);
   const input = screen.getByLabelText("选择建筑精修图片") as HTMLInputElement;
   const click = jest.spyOn(input, "click");
   fireEvent.click(screen.getByRole("button", { name: /建筑图像精修/ }));
   expect(click).toHaveBeenCalledTimes(1);
-  expect(onSelect).not.toHaveBeenCalled();
+  expect(onSelect).toHaveBeenCalledTimes(1);
+  expect(onSelect).toHaveBeenCalledWith("arch-edit", expect.any(String));
   fireEvent.change(input, {
     target: {
       files: [new File(["test-image"], "building.png", { type: "image/png" })],

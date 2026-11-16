@@ -87,6 +87,11 @@ export async function importStudyData(
       s.memoryPrompt = portable.memoryPrompt;
       s.lastUpdate = portable.lastUpdate;
       s.lastSummarizeIndex = 0;
+      s.workflowId = portable.workflowId;
+      s.contextWindow = portable.contextWindow;
+      s.autoCompact = portable.autoCompact;
+      s.clearContextIndex = portable.clearContextIndex;
+      s.contextSummary = portable.contextSummary;
     });
   }
   if (applyAppearance)

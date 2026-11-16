@@ -1,4 +1,5 @@
 import { Major } from "./user-profiles";
+import { specialistPrompt } from "./workflow-specialists";
 export type Workflow = {
   id: string;
   title: string;
@@ -143,7 +144,7 @@ export const DEFENSIVE_CONTEXT =
 export function workflowInstruction(id?: string) {
   const flow = WORKFLOWS.find((item) => item.id === id);
   return flow
-    ? `${flow.system}${
+    ? `${specialistPrompt(flow.id)}\n${flow.system}${
         ["cs", "security"].includes(flow.major) ? "\n" + DEFENSIVE_CONTEXT : ""
       }`
     : "";
