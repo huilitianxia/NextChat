@@ -12,6 +12,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 import SendWhiteIcon from "../icons/send-white.svg";
 import BrainIcon from "../icons/brain.svg";
@@ -59,7 +60,10 @@ import {
   selectOrCopy,
 } from "../utils";
 
-import { uploadImage as uploadImageRemote } from "@/app/utils/chat";
+import {
+  AttachmentImportDialog,
+  AttachmentImportChoice,
+} from "./attachment-import-dialog";
 import { WelcomeCard } from "./welcome-card";
 import { useCampusUI } from "../store/campus";
 import { useFinale } from "../store/finale";
@@ -71,12 +75,29 @@ import {
   MAX_DOCUMENTS,
   MAX_FILES,
   MAX_IMAGES,
-  MAX_TOTAL_CHARACTERS,
+  AttachmentFileSizeError,
+  AttachmentTextLimitError,
+  DocumentAttachment,
+  PdfPageRange,
   TextAttachment,
   attachmentKind,
   readDocumentAttachment,
   messageWithAttachments,
+  pdfPageLabel,
+  validateAttachmentText,
 } from "../utils/attachments";
+import {
+  AttachmentBudget,
+  attachmentBudget,
+  attachmentCharacterCount,
+  attachmentCharacters,
+  attachmentLimitLabel,
+  attachmentOverflowLabel,
+  attachmentPrefixPercent,
+  fileSizeLabel,
+  numberLabel,
+} from "../utils/attachment-policy";
+import { prepareImageAttachment } from "../utils/image-attachment";
 
 import dynamic from "next/dynamic";
 
@@ -92,6 +113,7 @@ import {
   ListItem,
   Modal,
   Selector,
+  Toast,
   showConfirm,
   showPrompt,
   showToast,
@@ -522,7 +544,9 @@ export function ChatActions(props: {
         icon={props.uploading ? <LoadingButtonIcon /> : <ImageIcon />}
         text={props.uploading ? "正在读取…" : mobile ? "文件" : "添加文件"}
         aria="添加图片、PDF、Word 或文本文件"
-        title="支持 .txt、.md、.csv、.json、.log、.docx、文本型 .doc，以及图片、PDF 和代码文件"
+        title={`图片、PDF、Word、PPTX、Excel、文本及代码；文档最多 100 MB。${attachmentLimitLabel(
+          attachmentBudget(currentModel, session.contextWindow),
+        )}`}
         onClick={props.uploadImage}
         disabled={props.uploading}
       />
@@ -879,6 +903,14 @@ function _Chat() {
   const [documents, setDocuments] = useState<TextAttachment[]>([]);
   const [dragging, setDragging] = useState(false);
   const [attachmentError, setAttachmentError] = useState("");
+  const [attachmentToast, setAttachmentToast] = useState("");
+  const attachmentToastTimer = useRef<number>();
+  const [importDialog, setImportDialog] = useState<{
+    fileName: string;
+    overflow: AttachmentTextLimitError;
+    budget: AttachmentBudget;
+    alreadyAttached: number;
+  } | null>(null);
   // Keep page ownership separate from URL equality: two PDF pages can render identically.
   const imageSources = useRef<
     Array<{ documentId: string; page: number } | null>
@@ -886,11 +918,19 @@ function _Chat() {
   const [copiedMessage, setCopiedMessage] = useState<string | null>(null);
   const dragDepth = useRef(0);
   const uploadInProgress = useRef(false);
+  const uploadController = useRef<AbortController | null>(null);
+  const importChoice = useRef<
+    ((choice: AttachmentImportChoice) => void) | null
+  >(null);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      uploadController.current?.abort();
+      importChoice.current?.(null);
+      importChoice.current = null;
+      window.clearTimeout(attachmentToastTimer.current);
     };
   }, []);
 
@@ -968,21 +1008,35 @@ function _Chat() {
   };
 
   const preparing = useRef(false);
+  function reportAttachmentError(message: string) {
+    setAttachmentError(message);
+    setAttachmentToast(message);
+    window.clearTimeout(attachmentToastTimer.current);
+    attachmentToastTimer.current = window.setTimeout(
+      () => setAttachmentToast(""),
+      6500,
+    );
+  }
+
   const doSubmit = (userInput: string) => {
     if (uploadInProgress.current || preparing.current) return;
     if (userInput.trim() === "" && !attachImages.length && !documents.length)
       return;
     if (attachImages.length && !isVisionModel(session.mask.modelConfig.model)) {
-      setAttachmentError(
+      reportAttachmentError(
         "当前模型不支持图片，请切换支持视觉的模型，或移除图片后发送。",
       );
       return;
     }
-    if (
-      documents.reduce((sum, item) => sum + item.text.length, 0) >
-      MAX_TOTAL_CHARACTERS
-    ) {
-      setAttachmentError("附件文字合计超过 80,000 字符，请分次发送。");
+    const budget = attachmentBudget(
+      session.mask.modelConfig.model,
+      session.contextWindow,
+    );
+    const documentCharacters = attachmentCharacters(documents);
+    if (documentCharacters > budget.limit) {
+      reportAttachmentError(
+        `${attachmentOverflowLabel(documentCharacters, budget)}请分次发送。`,
+      );
       return;
     }
     const matchCommand = chatCommands.match(userInput);
@@ -1007,13 +1061,14 @@ function _Chat() {
       savedSources = [...imageSources.current];
     chatStore
       .onUserInput(messageWithAttachments(userInput, documents), attachImages)
+      .then(() => originalImages.current.clear())
       .catch((e) => {
         if (
           sentOwner !== currentIdentity() ||
           useChatStore.getState().currentSession().id !== sentSession
         )
           return;
-        setAttachmentError((e as Error).message);
+        reportAttachmentError((e as Error).message);
         setUserInput(userInput);
         setAttachImages(savedImages);
         setDocuments(savedDocuments);
@@ -1380,57 +1435,155 @@ function _Chat() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function finishImportChoice(choice: AttachmentImportChoice) {
+    const resolve = importChoice.current;
+    importChoice.current = null;
+    setImportDialog(null);
+    resolve?.(choice);
+  }
+
+  async function importDocument(
+    file: File,
+    budget: AttachmentBudget,
+    alreadyAttached: number,
+    maxImages: number,
+    signal: AbortSignal,
+  ): Promise<DocumentAttachment | undefined> {
+    const maxCharacters = Math.max(0, budget.limit - alreadyAttached);
+    let pdfRange: PdfPageRange | undefined;
+    for (;;) {
+      try {
+        return await readDocumentAttachment(file, {
+          supportsVision: isVisionModel(budget.model),
+          maxImages,
+          maxCharacters,
+          pdfRange,
+          signal,
+        });
+      } catch (error) {
+        if (!(error instanceof AttachmentTextLimitError)) throw error;
+        const overflow = error;
+        signal.throwIfAborted();
+        if (!error.prefix.trim()) {
+          throw new Error(
+            attachmentOverflowLabel(
+              error.characterCount,
+              budget,
+              alreadyAttached,
+            ),
+          );
+        }
+        const choice = await new Promise<AttachmentImportChoice>((resolve) => {
+          importChoice.current = resolve;
+          setImportDialog({
+            fileName: file.name,
+            overflow,
+            budget,
+            alreadyAttached,
+          });
+        });
+        signal.throwIfAborted();
+        if (!choice) return;
+        if (choice === "prefix") {
+          const text = validateAttachmentText(error.prefix);
+          const kept = attachmentCharacterCount(text);
+          const portion = error.pdf?.range
+            ? `${pdfPageLabel(error.pdf.range)}的`
+            : "";
+          return {
+            text,
+            images: [],
+            notice: `已载入${portion}前 ${attachmentPrefixPercent(
+              kept,
+              error.characterCount,
+            )} 内容（${numberLabel(kept)} / ${numberLabel(
+              error.characterCount,
+            )} 字符）。`,
+          };
+        }
+        pdfRange = choice;
+      }
+    }
+  }
+
   async function addFiles(files: File[]) {
-    if (uploadInProgress.current) return;
+    if (!files.length || uploadInProgress.current || preparing.current) return;
+    const controller = new AbortController();
+    uploadController.current = controller;
+    const owner = currentIdentity();
+    const currentSession = () => useChatStore.getState().currentSession();
+    const active = () =>
+      mounted.current &&
+      owner === currentIdentity() &&
+      currentSession().id === session.id;
+    const currentBudget = () => {
+      const state = currentSession();
+      return attachmentBudget(
+        state.mask.modelConfig.model,
+        state.contextWindow,
+      );
+    };
     uploadInProgress.current = true;
     setUploading(true);
     setAttachmentError("");
     const nextImages = [...attachImages];
+    const nextOriginals = new Map(originalImages.current);
     const nextImageSources = [...imageSources.current];
     const nextDocuments = [...documents];
     const errors: string[] = [];
+    let nextAudio: File | undefined;
     try {
       for (const file of files.slice(0, MAX_FILES)) {
+        if (!active()) return;
         try {
           if (isAudioFile(file)) {
-            setAudioFile(file);
-            setAudioOpen(true);
+            nextAudio = file;
             continue;
           }
+          const budget = currentBudget();
           const kind = attachmentKind(file);
           if (kind === "image") {
-            if (!isVisionModel(session.mask.modelConfig.model)) {
+            if (!isVisionModel(budget.model)) {
               throw new Error("当前模型不支持图片，请先切换支持视觉的模型。");
             }
             if (nextImages.length >= MAX_IMAGES)
               throw new Error(
                 `每条消息最多添加 ${MAX_IMAGES} 张图片（含 PDF 页面）。`,
               );
-            const imageUrl = await uploadImageRemote(file);
+            const imageUrl = await prepareImageAttachment(
+              file,
+              controller.signal,
+            );
+            if (!active()) return;
+            if (!isVisionModel(currentBudget().model)) {
+              throw new Error("当前模型不支持图片，请先切换支持视觉的模型。");
+            }
             nextImages.push(imageUrl);
-            originalImages.current.set(imageUrl, file);
+            nextOriginals.set(imageUrl, file);
             nextImageSources.push(null);
           } else {
             if (nextDocuments.length >= MAX_DOCUMENTS)
               throw new Error(`每条消息最多添加 ${MAX_DOCUMENTS} 份文档。`);
-            const { text, images, notice } = await readDocumentAttachment(
+            const alreadyAttached = attachmentCharacters(nextDocuments);
+            const imported = await importDocument(
               file,
-              {
-                supportsVision: isVisionModel(session.mask.modelConfig.model),
-                maxImages: MAX_IMAGES - nextImages.length,
-              },
+              budget,
+              alreadyAttached,
+              MAX_IMAGES - nextImages.length,
+              controller.signal,
             );
-            if (
-              nextDocuments.reduce((sum, item) => sum + item.text.length, 0) +
-                text.length >
-              MAX_TOTAL_CHARACTERS
-            ) {
-              throw new Error("附件文字合计超过 80,000 字符，请分次发送。");
-            }
-            if (nextImages.length + images.length > MAX_IMAGES) {
+            if (!active()) return;
+            if (!imported) continue;
+            const { text, images, imagePageNumbers, notice } = imported;
+            const latestBudget = currentBudget();
+            const count = attachmentCharacterCount(text);
+            if (alreadyAttached + count > latestBudget.limit) {
               throw new Error(
-                `图片位置不足，每条消息最多添加 ${MAX_IMAGES} 张图片（含 PDF 页面）。`,
+                attachmentOverflowLabel(count, latestBudget, alreadyAttached),
               );
+            }
+            if (images.length && !isVisionModel(latestBudget.model)) {
+              throw new Error("当前模型不支持图片，请先切换支持视觉的模型。");
             }
             // Append the complete PDF result only after both budgets pass. Its page
             // images are already sized JPEG data URLs and must not be compressed again.
@@ -1447,13 +1600,23 @@ function _Chat() {
             nextImageSources.push(
               ...images.map((_, index) => ({
                 documentId: id,
-                page: index + 1,
+                page: imagePageNumbers?.[index] ?? index + 1,
               })),
             );
           }
         } catch (error) {
+          if (!active()) return;
+          if (error instanceof AttachmentFileSizeError) {
+            const budget = currentBudget();
+            errors.push(
+              `${file.name}：${error.message}${attachmentLimitLabel(budget)}${
+                budget.hint
+              }`,
+            );
+            continue;
+          }
           errors.push(
-            `${file.name}：${
+            `${file.name}（${fileSizeLabel(file.size)}）${
               error instanceof Error ? error.message : "读取失败，请重试。"
             }`,
           );
@@ -1461,13 +1624,19 @@ function _Chat() {
       }
       if (files.length > MAX_FILES)
         errors.push(`一次最多添加 ${MAX_FILES} 个文件，多余文件未添加。`);
-      if (mounted.current) {
+      if (active()) {
         imageSources.current = nextImageSources;
+        originalImages.current = nextOriginals;
         setAttachImages(nextImages);
         setDocuments(nextDocuments);
-        setAttachmentError(errors.join("\n"));
+        if (nextAudio) {
+          setAudioFile(nextAudio);
+          setAudioOpen(true);
+        }
+        if (errors.length) reportAttachmentError(errors.join("\n"));
       }
     } finally {
+      uploadController.current = null;
       uploadInProgress.current = false;
       if (mounted.current) setUploading(false);
     }
@@ -1499,6 +1668,13 @@ function _Chat() {
   function removeImage(index: number) {
     if (uploadInProgress.current) return;
     const source = imageSources.current[index];
+    const removed = attachImages[index];
+    if (
+      removed &&
+      !attachImages.some((value, i) => i !== index && value === removed)
+    ) {
+      originalImages.current.delete(removed);
+    }
     const pageIndex = imageSources.current
       .slice(0, index)
       .filter((item) => item?.documentId === source?.documentId).length;
@@ -2226,7 +2402,7 @@ function _Chat() {
             >
               {dragging && (
                 <div className={styles["drop-overlay"]} role="status">
-                  松开即可添加图片、PDF、Word、文本或代码文件
+                  松开即可添加图片、PDF、Word、PPTX、Excel、文本或代码文件
                 </div>
               )}
               {attachmentError && (
@@ -2544,6 +2720,19 @@ function _Chat() {
       {showShortcutKeyModal && (
         <ShortcutKeyModal onClose={() => setShowShortcutKeyModal(false)} />
       )}
+      {importDialog && (
+        <AttachmentImportDialog
+          {...importDialog}
+          onChoice={finishImportChoice}
+        />
+      )}
+      {attachmentToast &&
+        createPortal(
+          <div className={styles["attachment-toast"]} aria-hidden="true">
+            <Toast content={attachmentToast} />
+          </div>,
+          document.body,
+        )}
     </>
   );
 }

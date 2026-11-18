@@ -6,7 +6,6 @@ import {
   attachmentKind,
   decodeAttachmentText,
   LEGACY_BINARY_DOC_ERROR,
-  MAX_TEXT_CHARACTERS,
   readDocumentAttachment,
 } from "../app/utils/attachments";
 
@@ -25,7 +24,11 @@ beforeEach(() => {
   });
 });
 const read = (file: File) =>
-  readDocumentAttachment(file, { supportsVision: false, maxImages: 0 });
+  readDocumentAttachment(file, {
+    supportsVision: false,
+    maxImages: 0,
+    maxCharacters: 150_000,
+  });
 const docx = (name = "报告.docx") =>
   new File([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x01])], name);
 
@@ -137,12 +140,16 @@ test("corrupt DOCX and conversion errors produce friendly guidance instead of pa
   await expect(read(docx())).rejects.toThrow("另存为 .docx 或 .pdf");
 });
 
-test("empty and excessive Word text obey existing limits without silent truncation", async () => {
+test("Word uses the caller's context budget without silently truncating", async () => {
   extractRawText.mockResolvedValueOnce({ value: "\n\n", messages: [] });
   await expect(read(docx())).rejects.toThrow("未找到可读取");
-  extractRawText.mockResolvedValueOnce({
-    value: "字".repeat(MAX_TEXT_CHARACTERS + 1),
-    messages: [],
+  const value = "字".repeat(150_000);
+  extractRawText.mockResolvedValueOnce({ value, messages: [] });
+  await expect(read(docx())).resolves.toMatchObject({ text: value });
+  extractRawText.mockResolvedValueOnce({ value: value + "字", messages: [] });
+  await expect(read(docx())).rejects.toMatchObject({
+    available: 150_000,
+    characterCount: 150_001,
+    prefix: value,
   });
-  await expect(read(docx())).rejects.toThrow("60,000");
 });

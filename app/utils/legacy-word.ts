@@ -1,6 +1,5 @@
 const CONVERSION_ADVICE =
   "此 DOC 文本格式暂不支持或内容已损坏，请用 Word 或 WPS 另存为 DOCX 或 PDF 后重试。";
-const MAX_PARSE_CHARACTERS = 4 * 1024 * 1024;
 const WORD_NAMESPACES = new Set([
   "http://schemas.microsoft.com/office/word/2003/wordml",
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
@@ -408,7 +407,6 @@ function extractRtf(text: string) {
 /** Extract decoded textual DOC variants only. Binary format detection belongs to the caller. */
 export function extractLegacyWordText(text: string): string {
   const trimmed = text.replace(/^\uFEFF/, "").trim();
-  if (text.length > MAX_PARSE_CHARACTERS) unsupported();
   if (/^\{\\rtf/i.test(trimmed)) return extractRtf(trimmed);
   let signature = trimmed;
   let hasLeadingComment = false;

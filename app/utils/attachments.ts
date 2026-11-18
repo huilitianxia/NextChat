@@ -1,4 +1,13 @@
 import type { PDFPageProxy } from "pdfjs-dist";
+import {
+  AttachmentTextBuffer,
+  MAX_ATTACHMENT_BYTES,
+  STANDARD_ATTACHMENT_CHARACTERS,
+  fileSizeLabel,
+  numberLabel,
+} from "./attachment-policy";
+
+export { MAX_ATTACHMENT_BYTES } from "./attachment-policy";
 
 export type TextAttachment = {
   id: string;
@@ -11,12 +20,43 @@ export type TextAttachment = {
 export type DocumentAttachment = {
   text: string;
   images: string[];
+  imagePageNumbers?: number[];
   notice?: string;
 };
 
-export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-export const MAX_TEXT_CHARACTERS = 60000;
-export const MAX_TOTAL_CHARACTERS = 80000;
+export type PdfPageRange = { start: number; end: number };
+
+export class AttachmentTextLimitError extends Error {
+  constructor(
+    readonly characterCount: number,
+    readonly available: number,
+    readonly prefix: string,
+    readonly pdf?: { pages: number; range?: PdfPageRange },
+  ) {
+    super(
+      `当前文字 ${numberLabel(characterCount)} 字符，可用上限为 ${numberLabel(
+        available,
+      )} 字符。`,
+    );
+    this.name = "AttachmentTextLimitError";
+  }
+}
+
+export class AttachmentFileSizeError extends Error {
+  constructor(size: number) {
+    super(`当前文件 ${fileSizeLabel(size)}，单份文档的本地解析上限为 100 MB。`);
+    this.name = "AttachmentFileSizeError";
+  }
+}
+
+type DocumentOptions = {
+  supportsVision: boolean;
+  maxImages: number;
+  maxCharacters: number;
+  pdfRange?: PdfPageRange;
+  signal?: AbortSignal;
+};
+
 export const MAX_DOCUMENTS = 5;
 export const MAX_IMAGES = 8;
 export const MAX_FILES = 8;
@@ -29,6 +69,10 @@ const WORD_READ_ERROR =
   "无法读取此 Word 文档，请确认文件未损坏或加密，并在 Word 或 WPS 中另存为 .docx 或 .pdf 后重试。";
 const WORD_MIME =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const SHEET_MIME =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const SLIDES_MIME =
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 const TEXT_EXTENSIONS = new Set(
   "txt md mdx csv tsv json jsonl js jsx ts tsx py java c cpp h hpp cs go rs rb php html css scss sql sh bash ps1 yaml yml toml xml svg log ini conf vue svelte kt swift r m dockerfile gitignore".split(
     " ",
@@ -36,18 +80,25 @@ const TEXT_EXTENSIONS = new Set(
 );
 
 export const ATTACHMENT_ACCEPT =
-  `image/png,image/jpeg,image/webp,image/gif,application/pdf,.pdf,.docx,.doc,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,${WORD_MIME},application/msword,text/plain,text/markdown,text/csv,application/json,` +
+  `image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif,application/pdf,.pdf,.docx,.doc,.xlsx,.xls,.pptx,.ppt,${SHEET_MIME},${SLIDES_MIME},${WORD_MIME},application/msword,application/vnd.ms-powerpoint,application/vnd.ms-excel,text/plain,text/markdown,text/csv,application/json,` +
   Array.from(TEXT_EXTENSIONS, (extension) => `.${extension}`).join(",");
 
 export function attachmentKind(file: Pick<File, "name" | "type" | "size">) {
   if (!file.size) throw new Error("文件为空，无法读取。");
-  if (file.size > MAX_ATTACHMENT_BYTES)
-    throw new Error("单个文件不能超过 10 MB。");
   const extension = file.name.split(".").at(-1)?.toLowerCase() ?? "";
   if (
+    /^image\/(png|jpeg|webp|gif)$/.test(file.type) ||
+    /^(png|jpe?g|webp|gif)$/.test(extension)
+  )
+    return "image" as const;
+  if (file.size > MAX_ATTACHMENT_BYTES)
+    throw new AttachmentFileSizeError(file.size);
+  if (
     extension === "xlsx" ||
-    file.type ===
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    extension === "xls" ||
+    file.type === SHEET_MIME ||
+    (file.type === "application/vnd.ms-excel" &&
+      !TEXT_EXTENSIONS.has(extension))
   )
     return "xlsx" as const;
   // Word extensions take precedence over generic text MIME labels used by some pickers.
@@ -55,15 +106,15 @@ export function attachmentKind(file: Pick<File, "name" | "type" | "size">) {
   if (extension === "doc") return "doc" as const;
   if (file.type === WORD_MIME) return "docx" as const;
   if (file.type === "application/msword") return "doc" as const;
-  if (/^image\/(png|jpeg|webp|gif)$/.test(file.type)) return "image" as const;
+  if (extension === "pptx" || file.type === SLIDES_MIME) return "pptx" as const;
+  if (extension === "ppt" || file.type === "application/vnd.ms-powerpoint")
+    return "ppt" as const;
   if (extension === "pdf" || file.type === "application/pdf")
     return "pdf" as const;
   if (TEXT_EXTENSIONS.has(extension) || file.type.startsWith("text/")) {
-    if (file.size > 2 * 1024 * 1024)
-      throw new Error("文本或代码文件不能超过 2 MB。");
     return "text" as const;
   }
-  throw new Error("请选择图片、PDF、Word（.docx/.doc）、文本或代码文件。");
+  throw new Error("请选择图片、PDF、Word、PPTX、Excel、文本或代码文件。");
 }
 
 export function validateAttachmentText(text: string) {
@@ -73,9 +124,6 @@ export function validateAttachmentText(text: string) {
     );
   if (/[\u0000-\u0008\u000b\u000e-\u001f\u007f]/.test(text))
     throw new Error("文件包含二进制内容，请选择 UTF-8 或 GBK 文本文件。");
-  if (text.length > MAX_TEXT_CHARACTERS) {
-    throw new Error("文件文字超过 60,000 字符，请拆分后添加。");
-  }
   return text;
 }
 
@@ -232,35 +280,75 @@ async function renderPdfPage(page: PDFPageProxy): Promise<string> {
 
 export async function readDocumentAttachment(
   file: File,
-  options: { supportsVision: boolean; maxImages: number },
+  options: DocumentOptions,
 ): Promise<DocumentAttachment> {
   const kind = attachmentKind(file);
   if (kind === "image") throw new Error("图片应通过图片附件添加。");
-  if (kind === "xlsx") {
-    const { spreadsheetText } = await import("./doc-io");
-    return {
-      text: validateAttachmentText(
-        await spreadsheetText(await file.arrayBuffer()),
-      ),
-      images: [],
-    };
-  }
-  if (kind === "text") {
-    const bytes = await file.arrayBuffer();
-    return {
-      text: validateAttachmentText(decodeAttachmentText(bytes)),
-      images: [],
-    };
-  }
-  if (kind === "docx" || kind === "doc")
-    return readWordAttachment(await file.arrayBuffer(), kind);
+  if (kind === "ppt")
+    throw new Error("旧版 .ppt 请另存为 .pptx 或 PDF 后添加。");
+  options.signal?.throwIfAborted();
+  if (kind === "pdf") return readPdfAttachment(file, options);
 
+  const bytes = await file.arrayBuffer();
+  options.signal?.throwIfAborted();
+  const text = new AttachmentTextBuffer(options.maxCharacters);
+  let notice: string | undefined;
+  if (kind === "text") {
+    text.append(validateAttachmentText(decodeAttachmentText(bytes)));
+  } else if (kind === "xlsx") {
+    const { spreadsheetText } = await import("./doc-io");
+    await spreadsheetText(bytes, text, options.signal);
+  } else if (kind === "pptx") {
+    const { extractPresentationText } = await import(
+      "./presentation-attachment"
+    );
+    await extractPresentationText(bytes, text, options.signal);
+  } else {
+    const result = await readWordAttachment(bytes, kind);
+    text.append(result.text);
+    notice = result.notice;
+  }
+  options.signal?.throwIfAborted();
+  if (text.characterCount > options.maxCharacters) {
+    throw new AttachmentTextLimitError(
+      text.characterCount,
+      options.maxCharacters,
+      text.text,
+    );
+  }
+  return {
+    text: validateAttachmentText(text.text),
+    images: [],
+    ...(notice ? { notice } : {}),
+  };
+}
+
+export function validPdfRange({ start, end }: PdfPageRange, pages: number) {
+  return (
+    Number.isInteger(start) &&
+    Number.isInteger(end) &&
+    start >= 1 &&
+    end >= start &&
+    end <= pages
+  );
+}
+
+export function pdfPageLabel({ start, end }: PdfPageRange) {
+  return start === end ? `第 ${start} 页` : `第 ${start}–${end} 页`;
+}
+
+async function readPdfAttachment(
+  file: File,
+  options: DocumentOptions,
+): Promise<DocumentAttachment> {
   // Loaded only in the browser when a PDF is selected. No upload or server storage.
   const pdfjs = await import("pdfjs-dist");
   const assets = `/pdfjs/${pdfjs.version}/`;
   pdfjs.GlobalWorkerOptions.workerSrc = `${assets}pdf.worker.min.mjs`;
+  const data = new Uint8Array(await file.arrayBuffer());
+  options.signal?.throwIfAborted();
   const task = pdfjs.getDocument({
-    data: new Uint8Array(await file.arrayBuffer()),
+    data,
     isEvalSupported: false,
     useSystemFonts: true,
     cMapUrl: `${assets}cmaps/`,
@@ -269,11 +357,15 @@ export async function readDocumentAttachment(
   });
   try {
     const pdf = await task.promise;
-    if (pdf.numPages > 100) throw new Error("PDF 超过 100 页，请拆分后添加。");
-    const pages: string[] = [];
-    let length = 0;
+    const range = options.pdfRange ?? { start: 1, end: pdf.numPages };
+    if (!validPdfRange(range, pdf.numPages))
+      throw new Error(`请输入 1 至 ${pdf.numPages} 的有效起止页码。`);
+    const pageCount = range.end - range.start + 1;
+    const textBuffer = new AttachmentTextBuffer(options.maxCharacters);
+    const sparseThreshold = PDF_SPARSE_TEXT_THRESHOLD * pageCount;
     let readableCharacters = 0;
-    for (let i = 1; i <= pdf.numPages; i++) {
+    for (let i = range.start; i <= range.end; i++) {
+      options.signal?.throwIfAborted();
       const page = await pdf.getPage(i);
       try {
         const content = await page.getTextContent();
@@ -282,40 +374,66 @@ export async function readDocumentAttachment(
             "str" in item ? item.str + (item.hasEOL ? "\n" : " ") : "",
           )
           .join("");
-        const pageText = `[第 ${i} 页]\n${text}`;
-        length += pageText.length;
-        if (length > MAX_TEXT_CHARACTERS)
-          throw new Error("PDF 文字超过 60,000 字符，请拆分后添加。");
-        readableCharacters += text.replace(/\s/g, "").length;
-        if (text.trim()) pages.push(pageText);
+        if (text.trim()) {
+          validateAttachmentText(text);
+          if (textBuffer.characterCount) textBuffer.append("\n\n");
+          textBuffer.append(`[第 ${i} 页]\n${text}`);
+          if (readableCharacters < sparseThreshold)
+            readableCharacters += text.replace(/\s/g, "").length;
+        }
       } finally {
         page.cleanup();
       }
     }
-    const text = pages.join("\n\n");
-    if (text) validateAttachmentText(text);
-    const sparse =
-      readableCharacters < PDF_SPARSE_TEXT_THRESHOLD * pdf.numPages;
+    options.signal?.throwIfAborted();
+    const text = textBuffer.text;
+    if (textBuffer.characterCount > options.maxCharacters) {
+      throw new AttachmentTextLimitError(
+        textBuffer.characterCount,
+        options.maxCharacters,
+        text,
+        {
+          pages: pdf.numPages,
+          range: options.pdfRange,
+        },
+      );
+    }
+    const sparse = readableCharacters < sparseThreshold;
     if (!sparse || !options.supportsVision) {
       if (!text) {
         throw new Error(
           "扫描版 PDF 未找到可读取的文字，请切换支持图片的模型后重新添加。",
         );
       }
-      return { text, images: [] };
+      return {
+        text,
+        images: [],
+        ...(options.pdfRange
+          ? {
+              notice: `PDF 共 ${pdf.numPages} 页，已导入${pdfPageLabel(
+                range,
+              )}的文字。`,
+            }
+          : {}),
+      };
     }
 
-    const pageCount = Math.min(pdf.numPages, MAX_PDF_IMAGE_PAGES);
+    const imageCount = Math.min(pageCount, MAX_PDF_IMAGE_PAGES);
     if (
       !Number.isFinite(options.maxImages) ||
-      Math.floor(options.maxImages) < pageCount
+      Math.floor(options.maxImages) < imageCount
     ) {
       throw new Error(
-        `此 PDF 需要 ${pageCount} 个图片位置，请先移除其他图片后重新添加。`,
+        `此 PDF 需要 ${imageCount} 个图片位置，请先移除其他图片后重新添加。`,
       );
     }
     const images: string[] = [];
-    for (let i = 1; i <= pageCount; i++) {
+    const imagePageNumbers = Array.from(
+      { length: imageCount },
+      (_, index) => range.start + index,
+    );
+    for (const i of imagePageNumbers) {
+      options.signal?.throwIfAborted();
       const page = await pdf.getPage(i);
       try {
         images.push(await renderPdfPage(page));
@@ -323,23 +441,29 @@ export async function readDocumentAttachment(
         page.cleanup();
       }
     }
-    const scope = pageCount === 1 ? "第 1 页" : `第 1–${pageCount} 页`;
+    const scope = pdfPageLabel({
+      start: range.start,
+      end: imagePageNumbers.at(-1)!,
+    });
     const notice =
-      pdf.numPages > pageCount
-        ? `PDF 共 ${pdf.numPages} 页，文字较少，已将前 ${pageCount} 页（${scope}）转为图片；其余页面未转为图片。`
+      pageCount > imageCount
+        ? `PDF 共 ${pdf.numPages} 页，${
+            options.pdfRange ? "所选范围" : ""
+          }文字较少，已将前 ${imageCount} 页（${scope}）转为图片；其余页面未转为图片。`
         : `PDF 共 ${pdf.numPages} 页，文字较少，已将${scope}转为图片。`;
     return {
       text: [
         `PDF「${file.name.replace(/[\r\n]/g, " ")}」共 ${
           pdf.numPages
         } 页。已提供${scope}的页面图片，按页码顺序排列。${
-          pdf.numPages > pageCount ? "其余页面未提供图片。" : ""
+          pdf.numPages > imageCount ? "其余页面未提供图片。" : ""
         }`,
         text
           ? `以下为提取到的少量文字：\n${text}`
           : "此 PDF 无可提取文字，请根据页面图片阅读。",
       ].join("\n\n"),
       images,
+      imagePageNumbers,
       notice,
     };
   } catch (error) {
@@ -352,9 +476,16 @@ export async function readDocumentAttachment(
   }
 }
 
-export async function readTextAttachment(file: File): Promise<string> {
+export async function readTextAttachment(
+  file: File,
+  maxCharacters = STANDARD_ATTACHMENT_CHARACTERS,
+): Promise<string> {
   return (
-    await readDocumentAttachment(file, { supportsVision: false, maxImages: 0 })
+    await readDocumentAttachment(file, {
+      supportsVision: false,
+      maxImages: 0,
+      maxCharacters,
+    })
   ).text;
 }
 
@@ -362,16 +493,14 @@ export function messageWithAttachments(
   input: string,
   attachments: TextAttachment[],
 ) {
-  const blocks = attachments.map(({ name, text }) => {
-    const longestFence = Math.max(
-      2,
-      ...(text.match(/`+/g) ?? []).map((x) => x.length),
-    );
+  const blocks = attachments.map(({ name, text, notice }) => {
+    let longestFence = 2;
+    for (const run of text.matchAll(/`+/g))
+      longestFence = Math.max(longestFence, run[0].length);
     const fence = "`".repeat(longestFence + 1);
-    return `[附件：${name.replace(
-      /[\r\n]/g,
-      " ",
-    )}]\n${fence}text\n${text}\n${fence}`;
+    return `[附件：${name.replace(/[\r\n]/g, " ")}]${
+      notice ? `\n[导入说明：${notice}]` : ""
+    }\n${fence}text\n${text}\n${fence}`;
   });
   return [input.trim(), ...blocks].filter(Boolean).join("\n\n");
 }

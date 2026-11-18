@@ -132,7 +132,11 @@ function pdf(
 const file = () =>
   new File(["%PDF-test"], "扫描件.pdf", { type: "application/pdf" });
 const read = (maxImages = 8) =>
-  readDocumentAttachment(file(), { supportsVision: true, maxImages });
+  readDocumentAttachment(file(), {
+    supportsVision: true,
+    maxImages,
+    maxCharacters: 50_000,
+  });
 
 test("normal text PDFs stay text, even with no image slots available", async () => {
   const task = pdf({ texts: ["正文内容".repeat(30)] });
@@ -180,7 +184,11 @@ test("forty readable characters per page meet the text threshold", async () => {
 test("without vision, empty scans explain switching model and never render", async () => {
   const task = pdf();
   await expect(
-    readDocumentAttachment(file(), { supportsVision: false, maxImages: 8 }),
+    readDocumentAttachment(file(), {
+      supportsVision: false,
+      maxImages: 8,
+      maxCharacters: 50_000,
+    }),
   ).rejects.toThrow("切换支持图片的模型");
   expect(createElement).not.toHaveBeenCalled();
   expect(task.destroy).toHaveBeenCalledTimes(1);

@@ -35,6 +35,8 @@ export function ContextMeter({
   const [placement, setPlacement] = useState<CSSProperties>({});
   const visible = open || hovered;
   const enter = () => {
+    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches)
+      return;
     clearTimeout(hoverTimer.current);
     setHovered(true);
   };
@@ -167,11 +169,13 @@ export function ContextMeter({
         <span>/</span>
         <button
           aria-label="切换上下文窗口"
-          onClick={() =>
+          onClick={() => {
+            setOpen(false);
+            setHovered(false);
             update((s) => {
               s.contextWindow = limit === 1000000 ? 256000 : 1000000;
-            })
-          }
+            });
+          }}
         >
           {limit === 1000000 ? "1M" : "256k"}
         </button>

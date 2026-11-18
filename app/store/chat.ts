@@ -41,6 +41,11 @@ import type {
   ImageRevision,
 } from "../utils/campus-types";
 import { assertSafePrompt } from "../utils/security-guard";
+import {
+  chatMessagesBytes,
+  fileSizeLabel,
+  MAX_CHAT_REQUEST_BYTES,
+} from "../utils/attachment-policy";
 import { currentIdentity } from "../utils/identity-storage";
 import { workflowInstruction } from "../config/workflow-templates";
 import {
@@ -510,7 +515,11 @@ export const useChatStore = createPersistStore(
           throw new Error("会话已切换，请重新发送。");
         if (gauge.exceeded)
           throw new Error(
-            "估算上下文超过所选窗口，请先浓缩历史、移除附件或新建会话。草稿与附件已保留。",
+            `估算上下文为 ${gauge.total.toLocaleString(
+              "zh-CN",
+            )} token，当前窗口上限为 ${gauge.limit.toLocaleString(
+              "zh-CN",
+            )} token。请先浓缩历史、移除附件或新建会话。草稿与附件已保留。`,
           );
         const sendMessages = composeRequest(
           recentMessages,
@@ -518,6 +527,14 @@ export const useChatStore = createPersistStore(
           specialist,
           rag,
         );
+        const requestBytes = chatMessagesBytes(sendMessages);
+        if (requestBytes > MAX_CHAT_REQUEST_BYTES) {
+          throw new Error(
+            `当前请求约 ${fileSizeLabel(
+              requestBytes,
+            )}（含历史与附件），发送上限为 4 MiB。请减少图片或附件，或新建会话。草稿与附件已保留。`,
+          );
+        }
         const messageIndex = session.messages.length + 1;
 
         // save user's and bot's message

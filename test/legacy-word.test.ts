@@ -167,11 +167,10 @@ test.each([
   expect(() => extractLegacyWordText(text)).toThrow(/另存为 DOCX 或 PDF/);
 });
 
-test("bounds deeply nested RTF groups and large inputs without recursion or unbounded work", () => {
+test("rejects deeply nested RTF but lets the attachment budget govern long plain DOC text", () => {
   expect(() =>
     extractLegacyWordText("{\\rtf1" + "{".repeat(300) + "x" + "}".repeat(301)),
   ).toThrow("另存为 DOCX 或 PDF");
-  expect(() => extractLegacyWordText("x".repeat(4 * 1024 * 1024 + 1))).toThrow(
-    "另存为 DOCX 或 PDF",
-  );
+  const plainDoc = "x".repeat(4 * 1024 * 1024 + 1);
+  expect(extractLegacyWordText(plainDoc)).toBe(plainDoc);
 });

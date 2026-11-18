@@ -94,6 +94,7 @@ async function pagesFromFile(
     const { text } = await readDocumentAttachment(file, {
       supportsVision: false,
       maxImages: 0,
+      maxCharacters: 60_000,
     });
     // Word reflows with fonts/printers: do not invent fixed PDF page numbers.
     return text

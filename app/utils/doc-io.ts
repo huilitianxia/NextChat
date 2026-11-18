@@ -1,3 +1,5 @@
+import type { AttachmentTextBuffer } from "./attachment-policy";
+
 export type CodeBlock = { language: string; code: string; meta: string };
 export function codeBlocks(markdown: string): CodeBlock[] {
   const result: CodeBlock[] = [];
@@ -315,39 +317,55 @@ export async function wordBlob(
 }
 export async function spreadsheetText(
   data: ArrayBuffer | string,
-): Promise<string> {
+  text: AttachmentTextBuffer,
+  signal?: AbortSignal,
+) {
   const XLSX = await import("xlsx");
+  signal?.throwIfAborted();
   const workbook = XLSX.read(data, {
     type: typeof data === "string" ? "string" : "array",
+    dense: false,
     cellFormula: false,
     cellHTML: false,
     raw: true,
   });
-  const texts: string[] = [];
   for (const name of workbook.SheetNames) {
+    signal?.throwIfAborted();
     const sheet = workbook.Sheets[name];
-    const range = XLSX.utils.decode_range(sheet["!ref"] || "A1");
-    if ((range.e.r + 1) * (range.e.c + 1) > 100000)
-      throw new Error("表格范围过大，请拆分工作表后添加。");
-    const rows = XLSX.utils.sheet_to_json<string[]>(sheet, {
-      header: 1,
-      raw: false,
-      defval: "",
-      blankrows: false,
-    });
-    texts.push(
-      `[工作表：${name}]\n${rows
-        .map((row) =>
-          row.map((cell) => String(cell).replace(/[\t\r\n]+/g, " ")).join("\t"),
-        )
-        .join("\n")}`,
-    );
-    if (texts.join("\n\n").length > 60000)
-      throw new Error("表格文字超过 60,000 字符，请拆分后添加。");
+    const ref = sheet?.["!ref"];
+    if (!ref) continue;
+    const { s, e } = XLSX.utils.decode_range(ref);
+    // Traverse populated cells only. A faraway cell can create a huge !ref.
+    const cells = Object.keys(sheet)
+      .flatMap((address) => {
+        if (!/^[A-Z]{1,3}[1-9]\d*$/.test(address) || sheet[address]?.v == null)
+          return [];
+        const { r, c } = XLSX.utils.decode_cell(address);
+        if (r < s.r || r > e.r || c < s.c || c > e.c) return [];
+        return [{ address, r, c }];
+      })
+      .sort((a, b) => a.r - b.r || a.c - b.c);
+    let row = -1;
+    let column = s.c;
+    for (const { address, r, c } of cells) {
+      const value = XLSX.utils
+        .format_cell(sheet[address])
+        .replace(/[\t\r\n]+/g, " ");
+      if (!value.trim()) continue;
+      if (row < 0) {
+        if (text.characterCount) text.append("\n\n");
+        text.append(`[工作表：${name}]\n`);
+      } else if (r !== row) text.append("\n");
+
+      const gap = c - (r === row ? column : s.c);
+      if (r === row) text.append("\t");
+      // Keep ordinary TSV alignment and label widely separated cells explicitly.
+      text.append(`${gap > 32 ? `[${address}] ` : "\t".repeat(gap)}${value}`);
+      row = r;
+      column = c + 1;
+    }
   }
-  if (!texts.some((text) => text.split("\n").slice(1).join("").trim()))
-    throw new Error("工作簿没有可读取的单元格。");
-  return texts.join("\n\n");
+  if (!text.characterCount) throw new Error("工作簿没有可读取的单元格。");
 }
 export async function excelBlob(markdown: string) {
   const XLSX = await import("xlsx");
