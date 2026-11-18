@@ -6,6 +6,7 @@ import {
   ApiPath,
   DEFAULT_MODELS,
   GPT6_MODEL_REGEX,
+  GPT62_MODEL_REGEX,
   OpenaiPath,
   REQUEST_TIMEOUT_MS,
 } from "@/app/constant";
@@ -54,10 +55,10 @@ export interface RequestPayload {
   }[];
   stream?: boolean;
   model: string;
-  temperature: number;
+  temperature?: number;
   presence_penalty: number;
   frequency_penalty: number;
-  top_p: number;
+  top_p?: number;
   max_tokens?: number;
   max_completion_tokens?: number;
 }
@@ -213,6 +214,12 @@ export class ChatGPTApi implements LLMApi {
         // max_tokens: Math.max(modelConfig.max_tokens, 1024),
         // Please do not ask me why not send max_tokens, no reason, this param is just shit, I dont want to explain anymore.
       };
+
+      // GPT-6.2 rejects sampling parameters, including cached legacy values.
+      if (GPT62_MODEL_REGEX.test(modelConfig.model)) {
+        delete requestPayload.temperature;
+        delete requestPayload.top_p;
+      }
 
       if (isGpt5) {
         // Remove max_tokens if present

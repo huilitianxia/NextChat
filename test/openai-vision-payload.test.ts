@@ -73,6 +73,8 @@ test.each([
   "gpt-6",
   "gpt-6-astra",
   "gpt-6.1-sol",
+  "gpt-6.2-sol",
+  "gpt-6.2-sol-2026-11-18",
   "gpt-6.1-terra",
   "gpt-6.1-sol-2026-11-14",
   "GPT-6.1-TERRA",
@@ -90,6 +92,10 @@ test.each([
     expect(payload.messages).toEqual(messages);
     expect(payload).not.toHaveProperty("max_tokens");
     expect(payload).not.toHaveProperty("max_completion_tokens");
+    if (model.startsWith("gpt-6.2-")) {
+      expect(payload).not.toHaveProperty("temperature");
+      expect(payload).not.toHaveProperty("top_p");
+    }
   },
 );
 

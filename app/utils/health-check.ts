@@ -1,7 +1,13 @@
+import { DEFAULT_CHAT_MODEL } from "../constant";
+
 export const CAPABILITY_CHECKS = [
-  { id: "chat", label: "对话模型", model: "gpt-6.1-sol" },
+  { id: "chat", label: "对话模型", model: DEFAULT_CHAT_MODEL },
   { id: "audio", label: "音频转写", model: "whisper-1" },
-  { id: "search", label: "联网检索", model: "gpt-6.1-sol · web_search" },
+  {
+    id: "search",
+    label: "联网检索",
+    model: `${DEFAULT_CHAT_MODEL} · web_search`,
+  },
   { id: "image", label: "图片精修", model: "gpt-image-2.6-sunburst" },
 ] as const;
 export type CapabilityId = (typeof CAPABILITY_CHECKS)[number]["id"];

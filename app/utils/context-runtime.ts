@@ -6,7 +6,7 @@ import {
 } from "./context-compaction";
 import { contextWindow } from "./context-meter";
 import { useContextOperations } from "../store/context-operations";
-import { ServiceProvider } from "../constant";
+import { DEFAULT_CHAT_MODEL, ServiceProvider } from "../constant";
 export async function semanticCompaction(sessionId: string, apply = false) {
   if (typeof window === "undefined" || currentIdentity() === "locked")
     throw new Error("请先登录后使用智能浓缩。");
@@ -69,7 +69,7 @@ export async function semanticCompaction(sessionId: string, apply = false) {
               { role: "user", content: input },
             ],
             config: {
-              model: "gpt-6.1-sol",
+              model: DEFAULT_CHAT_MODEL,
               providerName: ServiceProvider.OpenAI,
               stream: true,
               webSearch: false,

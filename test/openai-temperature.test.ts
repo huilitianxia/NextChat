@@ -134,6 +134,31 @@ describe.each([false, true])(
       },
     );
 
+    test.each(["gpt-6.2-sol", "gpt-6.2-sol-2026-11-18", "GPT-6.2-SOL"])(
+      "omits rejected sampling fields for %s while retaining reasoning and history",
+      async (model) => {
+        configure(model);
+        const payload = {
+          ...legacyPayload(model),
+          reasoning_effort: "xhigh",
+          logprobs: true,
+          top_logprobs: 5,
+        };
+        const response = await requestOpenai(request(JSON.stringify(payload)));
+        expect(response.status).toBe(200);
+        expect(upstream).toHaveBeenCalledTimes(1);
+        const {
+          temperature: _temperature,
+          top_p: _topP,
+          logprobs: _logprobs,
+          top_logprobs: _topLogprobs,
+          ...expected
+        } = payload;
+        expect(JSON.parse(forwarded[0].body!)).toEqual(expected);
+        expect(await response.text()).toContain("data: [DONE]");
+      },
+    );
+
     test("does not add temperature when an updated client already omitted it", async () => {
       configure("gpt-6.1-sol");
       const payload = { model: "gpt-6.1-sol", messages: [], stream: false };
@@ -162,13 +187,16 @@ describe.each([false, true])(
   },
 );
 
-test("temperature normalization does not bypass the existing model allowlist", async () => {
-  config.customModels = "-all,+gpt-4o@openai";
-  const response = await requestOpenai(
-    request(JSON.stringify(legacyPayload("gpt-6.1-sol"))),
-  );
-  expect(response.status).toBe(403);
-  expect(await response.json()).toMatchObject({ error: true });
-  expect(upstream).not.toHaveBeenCalled();
-  expect(forwarded).toEqual([]);
-});
+test.each(["gpt-6.1-sol", "gpt-6.2-sol"])(
+  "parameter normalization does not bypass the model allowlist for %s",
+  async (model) => {
+    config.customModels = "-all,+gpt-4o@openai";
+    const response = await requestOpenai(
+      request(JSON.stringify(legacyPayload(model))),
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: true });
+    expect(upstream).not.toHaveBeenCalled();
+    expect(forwarded).toEqual([]);
+  },
+);

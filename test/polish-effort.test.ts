@@ -47,6 +47,9 @@ test.each(EFFORTS)("injects %s only for reasoning families", (effort) => {
   expect(effortPayload("gpt-6.1-sol", effort)).toEqual({
     reasoning_effort: effort,
   });
+  expect(effortPayload("gpt-6.2-sol", effort)).toEqual({
+    reasoning_effort: effort,
+  });
   expect(effortPayload("o3", effort)).toEqual({ reasoning_effort: effort });
   expect(effortPayload("gpt-4o", effort)).toEqual({});
   expect(effortPayload("gpt-60", effort)).toEqual({});

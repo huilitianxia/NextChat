@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { DEFAULT_CHAT_MODEL } from "../../constant";
 import {
   authorize,
   assertAllowedChatModel,
@@ -84,14 +85,14 @@ async function probe(
   signal: AbortSignal,
 ) {
   if (id === "chat") {
-    assertAllowedChatModel("gpt-6.1-sol");
+    assertAllowedChatModel(DEFAULT_CHAT_MODEL);
     const { response, data } = await request(
       req,
       "chat/completions",
       {
-        model: "gpt-6.1-sol",
+        model: DEFAULT_CHAT_MODEL,
         messages: [{ role: "user", content: "Reply with OK." }],
-        // GPT-6.1 Sol supports low effort, not 'none'. Leave room for reasoning.
+        // The default supports low effort, not 'none'. Leave room for reasoning.
         reasoning_effort: "low",
         max_completion_tokens: 1024,
         stream: false,
@@ -109,7 +110,7 @@ async function probe(
       throw new RequestError("接口未返回有效的对话结果。", 502);
     return {
       status: "ok" as const,
-      model: "gpt-6.1-sol",
+      model: DEFAULT_CHAT_MODEL,
       message: "对话请求成功。",
     };
   }
@@ -134,12 +135,12 @@ async function probe(
     };
   }
   if (id === "search") {
-    assertAllowedChatModel("gpt-6.1-sol");
+    assertAllowedChatModel(DEFAULT_CHAT_MODEL);
     const { response, data } = await request(
       req,
       "responses",
       {
-        model: "gpt-6.1-sol",
+        model: DEFAULT_CHAT_MODEL,
         input:
           "Use web search once to find the official OpenAI homepage. Reply with its URL.",
         tools: [{ type: "web_search", search_context_size: "low" }],
@@ -166,7 +167,7 @@ async function probe(
       );
     return {
       status: "ok" as const,
-      model: "gpt-6.1-sol · web_search",
+      model: `${DEFAULT_CHAT_MODEL} · web_search`,
       message: "已确认一次真实联网搜索完成。",
     };
   }

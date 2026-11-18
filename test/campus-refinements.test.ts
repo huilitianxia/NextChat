@@ -24,7 +24,7 @@ beforeEach(() => {
   delete process.env.IMAGE_EDIT_FALLBACK_MODEL;
   process.env.OPENAI_API_KEY = "server-only-test-key";
   process.env.BASE_URL = "https://upstream.test/v1";
-  process.env.CUSTOM_MODELS = "-all,+gpt-6.1-sol";
+  process.env.CUSTOM_MODELS = "-all,+gpt-6.2-sol";
   Object.assign(DEFAULT_FRIEND_PASSWORD_HASHES, originalHashes);
   // Synthetic test credential avoids placing the real handout in source control.
   DEFAULT_FRIEND_PASSWORD_HASHES.qikai = createHash("sha256")
@@ -140,12 +140,21 @@ test("health check probes all four actual endpoints with bounded synthetic input
   expect(calls).toHaveLength(4);
   const search = calls.find(([url]) => String(url).endsWith("responses"))!;
   expect(JSON.parse(String(search[1]?.body))).toMatchObject({
+    model: "gpt-6.2-sol",
     tools: [{ type: "web_search" }],
     tool_choice: "required",
     store: false,
     reasoning: { effort: "low" },
     max_output_tokens: 1024,
   });
+  const chat = calls.find(([url]) => String(url).endsWith("chat/completions"))!;
+  expect(JSON.parse(String(chat[1]?.body))).toMatchObject({
+    model: "gpt-6.2-sol",
+    reasoning_effort: "low",
+  });
+  expect(checks.find((result) => result.id === "chat")?.model).toBe(
+    "gpt-6.2-sol",
+  );
   const audio = calls.find(([url]) =>
     String(url).endsWith("audio/transcriptions"),
   )![1]?.body as FormData;

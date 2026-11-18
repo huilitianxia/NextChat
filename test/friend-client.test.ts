@@ -97,7 +97,7 @@ test("incorrect password clears an older identity", async () => {
   expect(useAccessStore.getState().identityVerified).toBe(false);
 });
 
-test("verified campus users keep the new-chat default pinned to gpt-6.1-sol", async () => {
+test("verified campus users keep the new-chat default pinned to gpt-6.2-sol", async () => {
   const { useAppConfig } = await import("../app/store/config");
   useAppConfig.getState().setDefaultModel("other-reasoning-model");
   useAccessStore.setState({ defaultModel: "other-reasoning-model" });
@@ -109,7 +109,7 @@ test("verified campus users keep the new-chat default pinned to gpt-6.1-sol", as
       }) as Response,
   ) as typeof fetch;
   await useAccessStore.getState().verifyAccessCode("valid-code");
-  expect(useAppConfig.getState().modelConfig.model).toBe("gpt-6.1-sol");
+  expect(useAppConfig.getState().modelConfig.model).toBe("gpt-6.2-sol");
 });
 
 test("switching identity preserves the administrator's model settings", () => {

@@ -39,7 +39,7 @@ export default function ReasoningCapsule({
         />
         <strong>{thinking ? "正在思考" : "思考摘要"}</strong>
         <span className={styles.effortBadge}>
-          {model === "gpt-6.1-sol" ? "6.1 Sol" : model || "AI"} ·{" "}
+          {model?.replace(/^gpt-(\d+(?:\.\d+)?)-sol$/i, "$1 Sol") || "AI"} ·{" "}
           {EFFORT_LABELS[effort]}
         </span>
         <small>

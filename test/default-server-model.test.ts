@@ -10,9 +10,9 @@ afterEach(() => {
 
 test("server configuration advertises the requested default without an env override", () => {
   delete process.env.DEFAULT_MODEL;
-  expect(getServerSideConfig().defaultModel).toBe("gpt-6.1-sol");
+  expect(getServerSideConfig().defaultModel).toBe("gpt-6.2-sol");
   process.env.DEFAULT_MODEL = "  ";
-  expect(getServerSideConfig().defaultModel).toBe("gpt-6.1-sol");
+  expect(getServerSideConfig().defaultModel).toBe("gpt-6.2-sol");
 });
 
 test("administrator DEFAULT_MODEL retains precedence", () => {

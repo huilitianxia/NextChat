@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSideConfig } from "../config/server";
-import { OPENAI_BASE_URL, ServiceProvider } from "../constant";
+import {
+  GPT62_MODEL_REGEX,
+  OPENAI_BASE_URL,
+  ServiceProvider,
+} from "../constant";
 import { cloudflareAIGatewayUrl } from "../utils/cloudflare";
 import { getModelProvider, isModelNotavailableInServer } from "../utils/model";
 
@@ -116,6 +120,9 @@ export async function requestOpenai(req: NextRequest) {
       const jsonBody = JSON.parse(rawBody) as {
         model?: string;
         temperature?: unknown;
+        top_p?: unknown;
+        logprobs?: unknown;
+        top_logprobs?: unknown;
         reasoning_effort?: unknown;
       } | null;
       if (
@@ -136,6 +143,18 @@ export async function requestOpenai(req: NextRequest) {
         Object.prototype.hasOwnProperty.call(jsonBody, "temperature")
       ) {
         delete jsonBody.temperature;
+        fetchOptions.body = JSON.stringify(jsonBody);
+      }
+
+      // Also normalize requests from browsers still running the previous build.
+      // https://developers.openai.com/api/docs/guides/latest-model#migration-quickstart
+      if (
+        typeof jsonBody?.model === "string" &&
+        GPT62_MODEL_REGEX.test(jsonBody.model.trim())
+      ) {
+        delete jsonBody.top_p;
+        delete jsonBody.logprobs;
+        delete jsonBody.top_logprobs;
         fetchOptions.body = JSON.stringify(jsonBody);
       }
 

@@ -25,7 +25,7 @@ function oldConfig(model: string) {
 }
 
 test("fresh settings and new chats use the requested exact model ID", () => {
-  expect(DEFAULT_CHAT_MODEL).toBe("gpt-6.1-sol");
+  expect(DEFAULT_CHAT_MODEL).toBe("gpt-6.2-sol");
   expect(useAppConfig.getState().modelConfig.model).toBe(DEFAULT_CHAT_MODEL);
   expect(createEmptyMask().modelConfig.model).toBe(DEFAULT_CHAT_MODEL);
   expect(DEFAULT_CONFIG.modelConfig.temperature).toBe(1);
@@ -69,6 +69,23 @@ test("administrator default updates automatic settings and new chats, including 
   expect(createEmptyMask().modelConfig.model).toBe("new-admin-model");
   useAppConfig.getState().reset();
   expect(useAppConfig.getState().modelConfig.model).toBe("new-admin-model");
+});
+
+test("an automatic previous Sol default follows the upgrade while a historical chat keeps its model", () => {
+  const mask = createEmptyMask();
+  mask.syncGlobalConfig = false;
+  mask.modelConfig.model = "gpt-6.1-sol";
+  useAppConfig.setState({
+    defaultModelSource: "automatic",
+    lastAppliedDefaultModel: "gpt-6.1-sol",
+    modelConfig: {
+      ...useAppConfig.getState().modelConfig,
+      model: "gpt-6.1-sol",
+    },
+  });
+  useAppConfig.getState().applyServerDefault(DEFAULT_CHAT_MODEL);
+  expect(createEmptyMask().modelConfig.model).toBe("gpt-6.2-sol");
+  expect(mask.modelConfig.model).toBe("gpt-6.1-sol");
 });
 
 test("an explicit local choice and an independently selected conversation stay unchanged", () => {

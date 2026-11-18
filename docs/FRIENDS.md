@@ -16,7 +16,7 @@
 | `FRIEND_PROFILES` | 密码与专属称呼、欢迎语、徽章的 JSON 映射                         |
 | `CODE`            | 兼容原来的逗号分隔密码，可与专属密码并用                         |
 | `BASE_URL`        | 可选，由管理员设置的 OpenAI 兼容服务地址；默认使用 OpenAI        |
-| `DEFAULT_MODEL`   | 可选，默认 `gpt-6.1-sol`；可改为上游支持的准确模型 ID            |
+| `DEFAULT_MODEL`   | 可选，默认 `gpt-6.2-sol`；可改为上游支持的准确模型 ID            |
 | `CUSTOM_MODELS`   | 可选，沿用 NextChat 模型列表配置；此版本统一使用 OpenAI 兼容接口 |
 | `VISION_MODELS`   | 可选，自定义模型的图片能力标记，沿用 NextChat 格式               |
 
@@ -42,9 +42,11 @@
 
 ### 默认模型
 
-本版本按要求预设 `gpt-6.1-sol`，并内置 GPT-6 系列对话模型的图片输入识别规则（包括次版本和快照名称）。实际模型服务与访问权限由部署配置决定。若上游使用其他名称，请设置 `DEFAULT_MODEL`，必要时在 `CUSTOM_MODELS` 中加入 `+准确名称@OpenAI`；不符合内置命名规则的视觉模型别名可通过 `VISION_MODELS` 补充。
+2026-11-18：默认模型升级为 `gpt-6.2-sol`。本仓库的 `vercel.json` 同时将构建期与运行期的 `DEFAULT_MODEL` 设为此 ID，并在部署时已核实的 `CUSTOM_MODELS` 清单中加入 `+gpt-6.2-sol=GPT-6.2 Sol`，保留原有四个可选模型。这里仅存非敏感的模型设置，密钥和用户密码仍由 Vercel 管理。新会话与智能浓缩、连通性检查共用默认模型常量。浏览器和服务端会移除 GPT-6.2 不支持的 `temperature`、`top_p`；服务端同时移除旧客户端传来的 `logprobs`、`top_logprobs`。四档思考强度继续使用 `low` / `medium` / `high` / `xhigh`。[官方迁移说明](https://developers.openai.com/api/docs/guides/latest-model#migration-quickstart)
 
-最终校园版在登录验证后，将七人的新会话默认模型固定为 `gpt-6.1-sol`；设置页只读显示此默认值。会话内仍可单独切换白名单允许的模型，历史会话不会被批量改写。四档思考强度只调整当前模型的 reasoning effort，极限档回退也不切换模型。
+本版本按要求预设 `gpt-6.2-sol`，并内置 GPT-6 系列对话模型的图片输入识别规则（包括次版本和快照名称）。实际模型服务与访问权限由部署配置决定。若上游使用其他名称，请设置 `DEFAULT_MODEL`，必要时在 `CUSTOM_MODELS` 中加入 `+准确名称@OpenAI`；不符合内置命名规则的视觉模型别名可通过 `VISION_MODELS` 补充。
+
+最终校园版在登录验证后，将七人的新会话默认模型固定为 `gpt-6.2-sol`；设置页只读显示此默认值。会话内仍可单独切换白名单允许的模型，历史会话不会被批量改写。四档思考强度只调整当前模型的 reasoning effort，极限档回退也不切换模型。
 
 上游模型清单缺少默认模型时仍保留该选择，不会自动换成其他模型；请求不受支持时显示上游错误。`CUSTOM_MODELS` 的显式禁用规则仍然有效。
 
@@ -109,7 +111,7 @@ yarn start
 
 ## GPT-6 图片上传修复（2026-11-14）
 
-统一视觉模型规则已覆盖 `gpt-6`、`gpt-6-*`、`gpt-6.*`。上传校验、发送校验及客户端请求组装共用此规则，拖拽和点击上传都会保留图片附件并发送 `image_url`；不会因为只识别出文字模型而丢弃图片。官方图像输入能力见 [OpenAI 模型目录](https://developers.openai.com/api/docs/models) 和 [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol)。自定义视觉模型配置和已有排除规则继续有效。
+统一视觉模型规则已覆盖 `gpt-6`、`gpt-6-*`、`gpt-6.*`。上传校验、发送校验及客户端请求组装共用此规则，拖拽和点击上传都会保留图片附件并发送 `image_url`；不会因为只识别出文字模型而丢弃图片。官方图像输入能力见 [OpenAI 模型目录](https://developers.openai.com/api/docs/models) 和 [GPT-6.2 Sol](https://developers.openai.com/api/docs/models/gpt-6.2-sol)。自定义视觉模型配置和已有排除规则继续有效。
 
 同时排除 GPT-6 的旧视觉模型 `max_tokens` 自动补充逻辑，保持此前 GPT-6 的输出 token 参数行为。
 

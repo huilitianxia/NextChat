@@ -6,7 +6,7 @@ const makeSession = () =>
     id: "s",
     contextWindow: 256000,
     memoryPrompt: "",
-    mask: { modelConfig: { model: "gpt-6.1-sol", reasoningEffort: "xhigh" } },
+    mask: { modelConfig: { model: "gpt-6.2-sol", reasoningEffort: "xhigh" } },
     messages: Array.from({ length: 12 }, (_, i) => ({
       id: `m${i}`,
       role: i % 2 ? "assistant" : "user",
@@ -58,7 +58,7 @@ test("semantic preview uses locked model and low per-call effort without changin
   const original = JSON.stringify(session),
     r = await semanticCompaction("s");
   expect(sent?.config).toMatchObject({
-    model: "gpt-6.1-sol",
+    model: "gpt-6.2-sol",
     reasoningEffort: "low",
     webSearch: false,
     stream: true,

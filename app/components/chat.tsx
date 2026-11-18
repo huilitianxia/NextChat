@@ -553,8 +553,8 @@ export function ChatActions(props: {
       <IconButton
         icon={<RobotIcon />}
         text={
-          (mobile && currentModel === "gpt-6.1-sol"
-            ? "6.1 Sol"
+          (mobile && /^gpt-\d+(?:\.\d+)?-sol$/i.test(currentModel)
+            ? currentModel.replace(/^gpt-(\d+(?:\.\d+)?)-sol$/i, "$1 Sol")
             : models.find((m) => m.name === currentModel)?.displayName) ||
           currentModel
         }
