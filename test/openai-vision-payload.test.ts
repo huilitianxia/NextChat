@@ -1,4 +1,6 @@
 import { jest } from "@jest/globals";
+import { ReadableStream as NodeReadableStream } from "node:stream/web";
+import { TextDecoder, TextEncoder } from "node:util";
 import type { ChatOptions, MultimodalContent } from "../app/client/api";
 import type { RequestPayload } from "../app/client/platforms/openai";
 
@@ -9,6 +11,7 @@ const { useChatStore } = await import("../app/store/chat");
 const { useAccessStore } = await import("../app/store/access");
 
 const originalFetch = global.fetch;
+const originalDecoder = globalThis.TextDecoder;
 const originalAccess = useAccessStore.getState();
 const sent: Array<{ url: string; payload: RequestPayload }> = [];
 const mockFetch = jest.fn<typeof fetch>(async (input, init) => {
@@ -34,6 +37,10 @@ const imageB: MultimodalContent = {
   },
 };
 
+beforeAll(() => {
+  globalThis.TextDecoder = TextDecoder;
+});
+
 beforeEach(() => {
   sent.length = 0;
   mockFetch.mockClear();
@@ -50,6 +57,7 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks());
 afterAll(() => {
   global.fetch = originalFetch;
+  globalThis.TextDecoder = originalDecoder;
   useAccessStore.setState(originalAccess);
 });
 
@@ -203,3 +211,81 @@ test("a valid five-page PDF at the per-page image limit still sends all five ima
   ];
   expect((await send("gpt-6.1-sol", messages)).messages).toEqual(messages);
 });
+
+test.each([false, true])(
+  "the interactive OpenAI request opens an SSE response with photo=%s",
+  async (withPhoto) => {
+    const answer =
+      'data: {"choices":[{"delta":{"content":"解答"}}]}\n\ndata: [DONE]\n\n';
+    mockFetch.mockResolvedValueOnce(mockStreamResponse(answer, 200));
+    const onError = jest.fn();
+    const done = new Promise<void>((resolve, reject) => {
+      void new ChatGPTApi()
+        .chat({
+          config: { model: "gpt-6.2-sol", stream: true },
+          messages: [{ role: "user", content: withPhoto ? [imageA] : "题目" }],
+          onFinish(message) {
+            try {
+              expect(message).toBe("解答");
+              resolve();
+            } catch (error) {
+              reject(error);
+            }
+          },
+          onError(error) {
+            onError(error);
+            reject(error);
+          },
+        })
+        .catch(reject);
+    });
+    await done;
+    expect(onError).not.toHaveBeenCalled();
+    const [, init] = mockFetch.mock.calls[0];
+    expect(new Headers(init?.headers).get("x-nextchat-chat-stream")).toBe("1");
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      stream: true,
+      messages: [{ role: "user", content: withPhoto ? [imageA] : "题目" }],
+    });
+  },
+);
+
+test.each([
+  [504, "Vercel gateway timeout"],
+  [200, 'event: nextchat.error\ndata: {"status":504}\n\n'],
+])(
+  "HTTP or SSE %s timeout reaches the chat error callback",
+  async (status, body) => {
+    mockFetch.mockResolvedValueOnce(mockStreamResponse(body, status));
+    const onFinish = jest.fn();
+    const error = await new Promise<Error>((resolve, reject) => {
+      void new ChatGPTApi()
+        .chat({
+          config: { model: "gpt-6.2-sol", stream: true },
+          messages: [{ role: "user", content: [imageA] }],
+          onFinish,
+          onError: resolve,
+        })
+        .catch(reject);
+    });
+    expect(error.message).toBe(
+      "模型思考时间过长触发了网关超时，请点击重试，或尝试将推理强度调低后再试",
+    );
+    expect(onFinish).not.toHaveBeenCalled();
+  },
+);
+
+function mockStreamResponse(body: string, status: number) {
+  const encoder = new TextEncoder();
+  return {
+    ok: status === 200,
+    status,
+    headers: new Headers({ "content-type": "text/event-stream" }),
+    body: new NodeReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(body));
+        controller.close();
+      },
+    }),
+  } as Response;
+}

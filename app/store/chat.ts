@@ -15,6 +15,10 @@ import type {
 } from "../client/api";
 import { getClientApi } from "../client/api";
 import { ChatControllerPool } from "../client/controller";
+import {
+  GATEWAY_TIMEOUT_MESSAGE,
+  isGatewayTimeout,
+} from "../utils/chat-stream-protocol";
 import { showToast } from "../components/ui-lib";
 import {
   DEFAULT_INPUT_TEMPLATE,
@@ -633,12 +637,14 @@ export const useChatStore = createPersistStore(
           onError(error) {
             if (owner !== currentIdentity()) return;
             const isAborted = error.message?.includes?.("aborted");
+            const gatewayTimeout =
+              error.message === GATEWAY_TIMEOUT_MESSAGE ||
+              isGatewayTimeout(undefined, error.message);
             botMessage.content +=
               "\n\n" +
-              prettyObject({
-                error: true,
-                message: error.message,
-              });
+              (gatewayTimeout
+                ? GATEWAY_TIMEOUT_MESSAGE
+                : prettyObject({ error: true, message: error.message }));
             botMessage.streaming = false;
             userMessage.isError = !isAborted;
             botMessage.isError = !isAborted;

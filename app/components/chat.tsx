@@ -1115,7 +1115,13 @@ function _Chat() {
     chatStore.updateTargetSession(session, (session) => {
       const stopTiming = Date.now() - REQUEST_TIMEOUT_MS;
       session.messages.forEach((m) => {
-        // check if should stop all stale messages
+        const request =
+          ChatControllerPool.controllers[
+            ChatControllerPool.key(session.id, m.id)
+          ];
+        if (request && !request.signal.aborted) return;
+
+        // Check for stale messages restored without an active request.
         if (m.isError || new Date(m.date).getTime() < stopTiming) {
           if (m.streaming) {
             m.streaming = false;

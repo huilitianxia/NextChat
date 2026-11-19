@@ -1,8 +1,23 @@
-import { reportEffort } from "./reasoning";
 import {
+  EFFORTS,
+  isReasoningModel,
+  reportEffort,
+  type ReasoningEffort,
+} from "./reasoning";
+import {
+  CHAT_STREAM_EFFORT,
+  CHAT_STREAM_ERROR,
+  CHAT_STREAM_HEADER,
+  GATEWAY_TIMEOUT_MESSAGE,
+  isGatewayTimeout,
+} from "./chat-stream-protocol";
+import {
+  ApiPath,
   CACHE_URL_PREFIX,
+  OpenaiPath,
   UPLOAD_URL,
   REQUEST_TIMEOUT_MS,
+  REQUEST_TIMEOUT_MS_FOR_THINKING,
 } from "@/app/constant";
 import { MultimodalContent, RequestMessage } from "@/app/client/api";
 import Locale from "@/app/locales";
@@ -415,17 +430,30 @@ export function streamWithThink(
   let responseText = "";
   let remainText = "";
   let finished = false;
+  let failed = false;
   let running = false;
   let runTools: any[] = [];
   let responseRes: Response;
   let isInThinkingMode = false;
+  const openAIChat = chatPath === ApiPath.OpenAI + "/" + OpenaiPath.ChatPath;
+
+  function fail(error: unknown) {
+    if (finished || controller.signal.aborted) return;
+    finished = true;
+    failed = true;
+    if (isInThinkingMode) remainText += "</think>\n\n";
+    if (remainText) options.onUpdate?.(responseText + remainText, "");
+    options.onError?.(
+      error instanceof Error ? error : new Error(String(error)),
+    );
+  }
 
   // animate response to make it looks smooth
   function animateResponseText() {
     if (finished || controller.signal.aborted) {
       responseText += remainText;
       console.log("[Response Animation] finished");
-      if (responseText?.length === 0) {
+      if (!failed && responseText.length === 0) {
         options.onError?.(new Error("empty response from server"));
       }
       return;
@@ -537,27 +565,41 @@ export function streamWithThink(
       method: "POST",
       body: JSON.stringify({
         ...requestPayload,
+        ...(openAIChat ? { stream: true } : {}),
         tools: tools && tools.length ? tools : undefined,
       }),
       signal: controller.signal,
-      headers,
+      headers: openAIChat ? { ...headers, [CHAT_STREAM_HEADER]: "1" } : headers,
     };
     const requestTimeoutId = setTimeout(
-      () => controller.abort(),
-      REQUEST_TIMEOUT_MS,
+      () => {
+        if (openAIChat) fail(new Error(GATEWAY_TIMEOUT_MESSAGE));
+        controller.abort();
+      },
+      openAIChat && isReasoningModel(requestPayload.model ?? "")
+        ? REQUEST_TIMEOUT_MS_FOR_THINKING
+        : REQUEST_TIMEOUT_MS,
     );
-    fetchEventSource(chatPath, {
+    void fetchEventSource(chatPath, {
       fetch: tauriFetch as any,
       ...chatPayload,
       async onopen(res) {
         clearTimeout(requestTimeoutId);
+        if (
+          isGatewayTimeout(res.status, res.headers.get("x-vercel-error") ?? "")
+        )
+          throw new Error(GATEWAY_TIMEOUT_MESSAGE);
+
         const contentType = res.headers.get("content-type");
         console.log("[Request] response content type: ", contentType);
         responseRes = res;
         reportEffort(res, options.onEffort);
 
         if (contentType?.startsWith("text/plain")) {
-          responseText = await res.clone().text();
+          const text = await res.clone().text();
+          if (isGatewayTimeout(undefined, text))
+            throw new Error(GATEWAY_TIMEOUT_MESSAGE);
+          responseText = text;
           return finish();
         }
 
@@ -570,9 +612,10 @@ export function streamWithThink(
         ) {
           const responseTexts = [responseText];
           let extraInfo = await res.clone().text();
+          if (isGatewayTimeout(undefined, extraInfo))
+            throw new Error(GATEWAY_TIMEOUT_MESSAGE);
           try {
-            const resJson = await res.clone().json();
-            extraInfo = prettyObject(resJson);
+            extraInfo = prettyObject(JSON.parse(extraInfo));
           } catch {}
 
           if (res.status === 401) {
@@ -589,9 +632,25 @@ export function streamWithThink(
         }
       },
       onmessage(msg) {
-        if (msg.data === "[DONE]" || finished) {
-          return finish();
+        if (finished) return;
+        if (msg.event === CHAT_STREAM_ERROR) {
+          const { status, message } = JSON.parse(msg.data);
+          throw new Error(
+            isGatewayTimeout(status, message)
+              ? GATEWAY_TIMEOUT_MESSAGE
+              : message || "模型服务连接中断，请重试。",
+          );
         }
+        if (msg.event === CHAT_STREAM_EFFORT) {
+          const { effective, fallback } = JSON.parse(msg.data) as {
+            effective: ReasoningEffort;
+            fallback?: boolean;
+          };
+          if (EFFORTS.includes(effective))
+            options.onEffort?.(effective, fallback === true);
+          return;
+        }
+        if (msg.data === "[DONE]") return finish();
         const text = msg.data;
         // Skip empty messages
         if (!text || text.trim().length === 0) {
@@ -625,12 +684,13 @@ export function streamWithThink(
       onclose() {
         finish();
       },
-      onerror(e) {
-        options?.onError?.(e);
-        throw e;
+      onerror(error) {
+        throw error;
       },
       openWhenHidden: true,
-    });
+    })
+      .catch(fail)
+      .finally(() => clearTimeout(requestTimeoutId));
   }
   console.debug("[ChatAPI] start");
   chatApi(chatPath, headers, requestPayload, tools); // call fetchEventSource
