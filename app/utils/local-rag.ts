@@ -1,7 +1,14 @@
 import { get, set, del } from "idb-keyval";
 import { currentIdentity } from "./identity-storage";
 import type { SourceChunk } from "./campus-types";
-import { readDocumentAttachment, attachmentKind } from "./attachments";
+import {
+  readDocumentAttachment,
+  attachmentKind,
+  PDF_SCAN_CHARACTERS_PER_PAGE,
+  ScannedPdfError,
+} from "./attachments";
+import { attachmentCharacterCount } from "./attachment-policy";
+import { STORAGE_FULL_MESSAGE, reportStorageError } from "./indexedDB-storage";
 export type ReferenceDocument = {
   id: string;
   name: string;
@@ -118,6 +125,7 @@ async function pagesFromFile(
       throw new Error("资料库单份 PDF 最多 100 页，请拆分后添加。");
     const pages = [];
     let length = 0;
+    let readable = 0;
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       try {
@@ -128,6 +136,7 @@ async function pagesFromFile(
           )
           .join("");
         length += text.length;
+        readable += attachmentCharacterCount(text.replace(/\s/g, ""));
         if (length > 60000)
           throw new Error("资料文字超过 60,000 字符，请拆分后添加。");
         if (text.trim()) pages.push({ text, page: i });
@@ -135,10 +144,8 @@ async function pagesFromFile(
         page.cleanup();
       }
     }
-    if (!pages.length)
-      throw new Error(
-        "资料库需要可检索文字。扫描 PDF 请在输入框上传，使用视觉模型阅读。",
-      );
+    if (readable < PDF_SCAN_CHARACTERS_PER_PAGE * pdf.numPages)
+      throw new ScannedPdfError();
     return pages;
   } finally {
     await task.destroy();
@@ -159,7 +166,14 @@ function mutate<T>(
       const { docs, result } = await operation((await get(storageKey)) ?? []);
       if (currentIdentity() !== owner)
         throw new Error("身份已切换，资料操作已取消。");
-      await set(storageKey, docs);
+      try {
+        await set(storageKey, docs);
+      } catch (error) {
+        reportStorageError(error);
+        if ((error as Error)?.name === "QuotaExceededError")
+          throw new Error(STORAGE_FULL_MESSAGE);
+        throw error;
+      }
       return result;
     });
   mutations.set(storageKey, result);

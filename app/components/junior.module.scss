@@ -186,6 +186,28 @@
     margin: 0;
   }
 }
+.popover.inlineDetails {
+  position: static;
+  inset: auto;
+  width: 100%;
+  max-width: 100%;
+  max-height: none;
+  overflow: visible;
+  margin-top: 8px;
+}
+.contextAdvisory {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+
+  button {
+    width: fit-content;
+    text-align: start;
+    color: var(--primary);
+  }
+}
 .section {
   padding: 14px;
   border: var(--border-in-light);

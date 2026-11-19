@@ -1,6 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import "katex/dist/katex.min.css";
 import RemarkMath from "remark-math";
+import { normalizeMarkdownMath } from "../utils/markdown-math";
 import RemarkBreaks from "remark-breaks";
 import RehypeKatex from "rehype-katex";
 import RemarkGfm from "remark-gfm";
@@ -312,24 +313,6 @@ function CustomCode(props: { children: any; className?: string }) {
   );
 }
 
-function escapeBrackets(text: string) {
-  const pattern =
-    /(```[\s\S]*?```|`.*?`)|\\\[([\s\S]*?[^\\])\\\]|\\\((.*?)\\\)/g;
-  return text.replace(
-    pattern,
-    (match, codeBlock, squareBracket, roundBracket) => {
-      if (codeBlock) {
-        return codeBlock;
-      } else if (squareBracket) {
-        return `$$${squareBracket}$$`;
-      } else if (roundBracket) {
-        return `$${roundBracket}$`;
-      }
-      return match;
-    },
-  );
-}
-
 function tryWrapHtmlCode(text: string) {
   // try add wrap html code (fixed: html codeblock include 2 newline)
   // ignore embed codeblock
@@ -353,7 +336,7 @@ function tryWrapHtmlCode(text: string) {
 
 function _MarkDownContent(props: { content: string }) {
   const escapedContent = useMemo(() => {
-    return tryWrapHtmlCode(escapeBrackets(props.content));
+    return normalizeMarkdownMath(tryWrapHtmlCode(props.content));
   }, [props.content]);
 
   return (

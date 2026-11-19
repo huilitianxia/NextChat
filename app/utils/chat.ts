@@ -5,6 +5,7 @@ import {
   type ReasoningEffort,
 } from "./reasoning";
 import {
+  CHAT_INTERRUPTED_MESSAGE,
   CHAT_STREAM_EFFORT,
   CHAT_STREAM_ERROR,
   CHAT_STREAM_HEADER,
@@ -682,6 +683,15 @@ export function streamWithThink(
         }
       },
       onclose() {
+        if (
+          !finished &&
+          openAIChat &&
+          (document.visibilityState === "hidden" ||
+            window.matchMedia?.("(pointer: coarse)").matches)
+        ) {
+          fail(new Error(CHAT_INTERRUPTED_MESSAGE));
+          return;
+        }
         finish();
       },
       onerror(error) {

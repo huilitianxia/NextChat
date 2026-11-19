@@ -97,6 +97,7 @@
 
 @media only screen and (max-width: 600px) {
   :root {
+    --full-height: var(--mobile-viewport-height, 100dvh);
     --window-width: 100vw;
     --window-height: var(--full-height);
     --sidebar-width: 100vw;
@@ -106,6 +107,10 @@
 
   .no-mobile {
     display: none;
+  }
+  html,
+  body {
+    overscroll-behavior-y: contain;
   }
 }
 

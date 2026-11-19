@@ -6,10 +6,12 @@ export function CampusDialog({
   title,
   children,
   onClose,
+  sheet = false,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
+  sheet?: boolean;
 }) {
   const [mounted, setMounted] = useState(false),
     ref = useRef<HTMLDivElement>(null),
@@ -22,8 +24,15 @@ export function CampusDialog({
   useEffect(() => {
     if (!mounted) return;
     const opener = document.activeElement as HTMLElement | null;
-    ref.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    ref.current
+      ?.querySelector<HTMLButtonElement>("button")
+      ?.focus({ preventScroll: true });
     const key = (event: KeyboardEvent) => {
+      if (
+        Array.from(document.querySelectorAll("[data-campus-dialog]")).at(-1) !==
+        ref.current
+      )
+        return;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -60,7 +69,9 @@ export function CampusDialog({
   if (!mounted) return null;
   return createPortal(
     <div
-      className={styles.backdrop}
+      className={
+        sheet ? styles.backdrop + " " + styles.sheetBackdrop : styles.backdrop
+      }
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -68,6 +79,7 @@ export function CampusDialog({
       <div
         ref={ref}
         className={styles.dialog}
+        data-campus-dialog
         role="dialog"
         aria-modal="true"
         aria-labelledby={id}

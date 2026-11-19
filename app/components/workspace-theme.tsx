@@ -8,22 +8,30 @@ import {
 import { useState } from "react";
 import { CampusDialog } from "./campus-dialog";
 import styles from "./polish.module.scss";
-export default function WorkspaceTheme() {
+export default function WorkspaceTheme({
+  onClose,
+}: { onClose?: () => void } = {}) {
   const prefs = useWorkspacePreferences();
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button
-        className={styles.themeTrigger}
-        type="button"
-        aria-label="主题与配色"
-        onClick={() => setOpen(true)}
-      >
-        <span aria-hidden="true">◐</span>
-        <span>外观</span>
-      </button>
-      {open && (
-        <CampusDialog title="主题与配色" onClose={() => setOpen(false)}>
+      {!onClose && (
+        <button
+          className={styles.themeTrigger}
+          type="button"
+          aria-label="主题与配色"
+          onClick={() => setOpen(true)}
+        >
+          <span aria-hidden="true">◐</span>
+          <span>外观</span>
+        </button>
+      )}
+      {(open || onClose) && (
+        <CampusDialog
+          title="主题与配色"
+          sheet={!!onClose}
+          onClose={onClose ?? (() => setOpen(false))}
+        >
           <p className={styles.muted}>
             让工作台贴合你的习惯。设置只属于当前身份。
           </p>

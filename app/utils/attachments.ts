@@ -1,6 +1,7 @@
 import type { PDFPageProxy } from "pdfjs-dist";
 import {
   AttachmentTextBuffer,
+  attachmentCharacterCount,
   MAX_ATTACHMENT_BYTES,
   STANDARD_ATTACHMENT_CHARACTERS,
   fileSizeLabel,
@@ -55,12 +56,23 @@ type DocumentOptions = {
   maxCharacters: number;
   pdfRange?: PdfPageRange;
   signal?: AbortSignal;
+  onScannedPdf?: () => Promise<boolean>;
 };
 
 export const MAX_DOCUMENTS = 5;
 export const MAX_IMAGES = 8;
 export const MAX_FILES = 8;
 export const PDF_SPARSE_TEXT_THRESHOLD = 40;
+export const PDF_SCAN_CHARACTERS_PER_PAGE = 20;
+export const PDF_SCAN_NOTICE =
+  "检测到该 PDF 为纯图片扫描件（无内置文字层），无法直接提取文本；建议截图后使用「拍照识题」或转为图片上传";
+
+export class ScannedPdfError extends Error {
+  constructor() {
+    super(PDF_SCAN_NOTICE);
+    this.name = "ScannedPdfError";
+  }
+}
 export const MAX_PDF_IMAGE_PAGES = 5;
 export const MAX_PDF_IMAGE_DATA_URL_LENGTH = 480 * 1024;
 export const LEGACY_BINARY_DOC_ERROR =
@@ -379,13 +391,23 @@ async function readPdfAttachment(
           if (textBuffer.characterCount) textBuffer.append("\n\n");
           textBuffer.append(`[第 ${i} 页]\n${text}`);
           if (readableCharacters < sparseThreshold)
-            readableCharacters += text.replace(/\s/g, "").length;
+            readableCharacters += attachmentCharacterCount(
+              text.replace(/\s/g, ""),
+            );
         }
       } finally {
         page.cleanup();
       }
     }
     options.signal?.throwIfAborted();
+    if (
+      readableCharacters < PDF_SCAN_CHARACTERS_PER_PAGE * pageCount &&
+      options.onScannedPdf
+    ) {
+      const convert = await options.onScannedPdf();
+      options.signal?.throwIfAborted();
+      if (!convert || !options.supportsVision) throw new ScannedPdfError();
+    }
     const text = textBuffer.text;
     if (textBuffer.characterCount > options.maxCharacters) {
       throw new AttachmentTextLimitError(

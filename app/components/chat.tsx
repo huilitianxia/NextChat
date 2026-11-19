@@ -1,7 +1,13 @@
 import { ContextMeter } from "./context-meter";
+import { CampusDialog } from "./campus-dialog";
 import juniorStyles from "./junior.module.scss";
 import { lazyModal } from "./lazy-modal";
-import { splitReasoning, isReasoningModel } from "../utils/reasoning";
+import {
+  splitReasoning,
+  isReasoningModel,
+  EFFORT_LABELS,
+} from "../utils/reasoning";
+import { useWorkspacePreferences } from "../store/workspace-preferences";
 import { useDebouncedCallback } from "use-debounce";
 import React, {
   Fragment,
@@ -19,7 +25,6 @@ import BrainIcon from "../icons/brain.svg";
 import RenameIcon from "../icons/rename.svg";
 import EditIcon from "../icons/rename.svg";
 import ExportIcon from "../icons/share.svg";
-import ReturnIcon from "../icons/return.svg";
 import CopyIcon from "../icons/copy.svg";
 import SpeakIcon from "../icons/speak.svg";
 import SpeakStopIcon from "../icons/speak-stop.svg";
@@ -35,6 +40,8 @@ import ConfirmIcon from "../icons/confirm.svg";
 import CloseIcon from "../icons/close.svg";
 import CancelIcon from "../icons/cancel.svg";
 import ImageIcon from "../icons/image.svg";
+import AddIcon from "../icons/add.svg";
+import MenuIcon from "../icons/menu.svg";
 
 import BottomIcon from "../icons/bottom.svg";
 import StopIcon from "../icons/pause.svg";
@@ -55,7 +62,6 @@ import {
   getMessageImages,
   getMessageTextContent,
   isVisionModel,
-  safeLocalStorage,
   useMobileScreen,
   selectOrCopy,
 } from "../utils";
@@ -75,6 +81,8 @@ import {
   MAX_DOCUMENTS,
   MAX_FILES,
   MAX_IMAGES,
+  PDF_SCAN_NOTICE,
+  ScannedPdfError,
   AttachmentFileSizeError,
   AttachmentTextLimitError,
   DocumentAttachment,
@@ -107,6 +115,9 @@ import Locale from "../locales";
 
 import { IconButton } from "./button";
 import styles from "./chat.module.scss";
+import mobileStyles from "./mobile-chat.module.scss";
+import { MobileThinking } from "./mobile-thinking";
+import { useMobileViewport } from "../utils/mobile-viewport";
 
 import {
   List,
@@ -126,7 +137,6 @@ import {
   Path,
   REQUEST_TIMEOUT_MS,
   ServiceProvider,
-  UNFINISHED_INPUT,
 } from "../constant";
 import { Avatar } from "./emoji";
 import { ContextPrompts, MaskAvatar, MaskConfig } from "./mask";
@@ -144,7 +154,8 @@ import { RealtimeChat } from "@/app/components/realtime-chat";
 import clsx from "clsx";
 import campusStyles from "./campus.module.scss";
 import { assertSafePrompt } from "../utils/security-guard";
-import { currentIdentity, identityStorageKey } from "../utils/identity-storage";
+import { currentIdentity } from "../utils/identity-storage";
+import { useChatDraft } from "../utils/chat-draft";
 import { isAudioFile, AUDIO_ACCEPT } from "../utils/audio-transcription";
 import { WORKFLOWS, WORKSPACE_QUOTES } from "../config/workflow-templates";
 const ReferenceLibrary = lazyModal(
@@ -159,6 +170,7 @@ const ImageAnnotator = lazyModal(
   () => import("./image-annotator"),
   "图片精修画布",
 );
+const PhotoCapture = lazyModal(() => import("./photo-capture"), "拍照识题");
 const ImageComparison = dynamic(() => import("./image-comparison"), {
   ssr: false,
 });
@@ -168,8 +180,6 @@ const AssistantExports = dynamic(() => import("./assistant-exports"), {
 const SourceCitations = dynamic(() => import("./source-citations"), {
   ssr: false,
 });
-
-const localStorage = safeLocalStorage();
 
 const ttsPlayer = createTTSPlayer();
 
@@ -467,59 +477,34 @@ export function ChatAction(props: {
 
 function useScrollToBottom(
   scrollRef: RefObject<HTMLDivElement>,
-  detach: boolean = false,
   messages: ChatMessage[],
 ) {
-  // for auto-scroll
-  const [autoScroll, setAutoScroll] = useState(true);
+  const autoScroll = useRef(true);
+  const setAutoScroll = useCallback((pinned: boolean) => {
+    autoScroll.current = pinned;
+  }, []);
   const scrollDomToBottom = useCallback(() => {
     if (!messages.length) return;
-    const dom = scrollRef.current;
-    if (dom) {
-      requestAnimationFrame(() => {
-        setAutoScroll(true);
-        dom.scrollTo(0, dom.scrollHeight);
-      });
-    }
-  }, [scrollRef, messages.length]);
+    setAutoScroll(true);
+    requestAnimationFrame(() => {
+      const dom = scrollRef.current;
+      if (autoScroll.current && dom) dom.scrollTo(0, dom.scrollHeight);
+    });
+  }, [messages.length, scrollRef, setAutoScroll]);
 
-  // auto scroll
   useEffect(() => {
-    if (autoScroll && !detach) {
-      scrollDomToBottom();
-    }
-  });
+    if (messages.length && autoScroll.current) scrollDomToBottom();
+  }, [messages, scrollDomToBottom]);
 
-  // auto scroll when messages length changes
-  const lastMessagesLength = useRef(messages.length);
-  useEffect(() => {
-    if (messages.length > lastMessagesLength.current && !detach) {
-      scrollDomToBottom();
-    }
-    lastMessagesLength.current = messages.length;
-  }, [messages.length, detach, scrollDomToBottom]);
-
-  return {
-    scrollRef,
-    autoScroll,
-    setAutoScroll,
-    scrollDomToBottom,
-  };
+  return { setAutoScroll, scrollDomToBottom };
 }
 
 export function ChatActions(props: {
   uploadImage: () => void;
-  captureImage: (file: File) => void;
-  setAttachImages: (images: string[]) => void;
-  setUploading: (uploading: boolean) => void;
-  showPromptModal: () => void;
-  scrollToBottom: () => void;
-  showPromptHints: () => void;
-  hitBottom: boolean;
+  openCamera: () => void;
+  openTools: () => void;
+  toolsOpen: boolean;
   uploading: boolean;
-  setShowShortcutKeyModal: React.Dispatch<React.SetStateAction<boolean>>;
-  setUserInput: (input: string) => void;
-  setShowChatSidePanel: React.Dispatch<React.SetStateAction<boolean>>;
 }) {
   const chatStore = useChatStore();
   const session = chatStore.currentSession();
@@ -535,14 +520,123 @@ export function ChatActions(props: {
   );
   const currentModel = session.mask.modelConfig.model;
   const mobile = useMobileScreen();
-  const cameraInput = useRef<HTMLInputElement>(null);
+  const effort = useWorkspacePreferences((state) => state.effort);
   const [showModelSelector, setShowModelSelector] = useState(false);
+  const modelLabel = (name: string, displayName?: string) => {
+    const match = /^gpt-(\d+(?:\.\d+)?)-(sol|astra)$/i.exec(name);
+    return match
+      ? match[1] + " " + (match[2].toLowerCase() === "sol" ? "Sol" : "Astra")
+      : displayName || name;
+  };
+  const label = modelLabel(
+    currentModel,
+    models.find((m) => m.name === currentModel)?.displayName,
+  );
+  const reasoning = isReasoningModel(currentModel);
+  const changeModel = (model: string) => {
+    chatStore.updateTargetSession(session, (target) => {
+      target.mask.modelConfig.model = model;
+      target.mask.modelConfig.providerName = ServiceProvider.OpenAI;
+      target.mask.syncGlobalConfig = false;
+    });
+  };
+
+  if (mobile) {
+    return (
+      <>
+        <div
+          className={mobileStyles.coreActions}
+          role="group"
+          aria-label="快捷工具"
+        >
+          <button
+            type="button"
+            onClick={props.openCamera}
+            disabled={props.uploading}
+          >
+            <span aria-hidden="true" className={mobileStyles.actionIcon}>
+              📷
+            </span>
+            拍照识题
+          </button>
+          <button
+            type="button"
+            onClick={props.uploadImage}
+            disabled={props.uploading}
+            aria-label="添加图片、PDF、Word 或文本文件"
+          >
+            <span aria-hidden="true" className={mobileStyles.actionIcon}>
+              📎
+            </span>
+            {props.uploading ? "读取中" : "文件"}
+          </button>
+          <button
+            type="button"
+            aria-label={
+              "模型与推理档位，" +
+              label +
+              (reasoning ? " · " + EFFORT_LABELS[effort] : "")
+            }
+            aria-expanded={showModelSelector}
+            onClick={() => setShowModelSelector(true)}
+          >
+            {label}
+            {reasoning && " · " + EFFORT_LABELS[effort]}
+          </button>
+          <button
+            type="button"
+            aria-expanded={props.toolsOpen}
+            onClick={props.openTools}
+          >
+            + 更多工具
+            {session.webSearch && (
+              <span
+                className={mobileStyles.searchDot}
+                role="img"
+                aria-label="联网已开启"
+              />
+            )}
+          </button>
+        </div>
+        {showModelSelector && (
+          <CampusDialog
+            title="模型与推理档位"
+            sheet
+            onClose={() => setShowModelSelector(false)}
+          >
+            {reasoning && (
+              <div className={mobileStyles.sheetEffort}>
+                <span>思考强度</span>
+                <ReasoningEffortControl />
+              </div>
+            )}
+            <div
+              className={mobileStyles.sheetGrid}
+              role="group"
+              aria-label="可用模型"
+            >
+              {models.map((model) => (
+                <button
+                  key={model.name}
+                  type="button"
+                  aria-pressed={currentModel === model.name}
+                  onClick={() => changeModel(model.name)}
+                >
+                  {modelLabel(model.name, model.displayName)}
+                </button>
+              ))}
+            </div>
+          </CampusDialog>
+        )}
+      </>
+    );
+  }
 
   return (
     <div className={styles["chat-input-actions"]}>
       <IconButton
         icon={props.uploading ? <LoadingButtonIcon /> : <ImageIcon />}
-        text={props.uploading ? "正在读取…" : mobile ? "文件" : "添加文件"}
+        text={props.uploading ? "正在读取…" : "添加文件"}
         aria="添加图片、PDF、Word 或文本文件"
         title={`图片、PDF、Word、PPTX、Excel、文本及代码；文档最多 100 MB。${attachmentLimitLabel(
           attachmentBudget(currentModel, session.contextWindow),
@@ -550,54 +644,21 @@ export function ChatActions(props: {
         onClick={props.uploadImage}
         disabled={props.uploading}
       />
-      {mobile && (
-        <>
-          <input
-            hidden
-            ref={cameraInput}
-            aria-label="拍照识题相机"
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.target.value = "";
-              if (file) props.captureImage(file);
-            }}
-          />
-          <IconButton
-            icon={<span aria-hidden="true">⌾</span>}
-            text="拍照识题"
-            aria="拍照识题"
-            disabled={props.uploading}
-            onClick={() => cameraInput.current?.click()}
-          />
-        </>
-      )}
       <IconButton
         icon={<RobotIcon />}
         text={
-          (mobile && /^gpt-\d+(?:\.\d+)?-sol$/i.test(currentModel)
-            ? currentModel.replace(/^gpt-(\d+(?:\.\d+)?)-sol$/i, "$1 Sol")
-            : models.find((m) => m.name === currentModel)?.displayName) ||
+          models.find((m) => m.name === currentModel)?.displayName ||
           currentModel
         }
         aria="切换模型"
         onClick={() => setShowModelSelector(true)}
       />
-      {isReasoningModel(currentModel) && <ReasoningEffortControl />}
+      {reasoning && <ReasoningEffortControl />}
       {ChatControllerPool.hasPending() && (
         <IconButton
           icon={<StopIcon />}
           text="停止生成"
           onClick={() => ChatControllerPool.stopAll()}
-        />
-      )}
-      {!props.hitBottom && (
-        <IconButton
-          icon={<BottomIcon />}
-          text="回到底部"
-          onClick={props.scrollToBottom}
         />
       )}
       {showModelSelector && (
@@ -610,12 +671,7 @@ export function ChatActions(props: {
           }))}
           onClose={() => setShowModelSelector(false)}
           onSelection={(selected) => {
-            if (!selected.length) return;
-            chatStore.updateTargetSession(session, (target) => {
-              target.mask.modelConfig.model = selected[0];
-              target.mask.modelConfig.providerName = ServiceProvider.OpenAI;
-              target.mask.syncGlobalConfig = false;
-            });
+            if (selected.length) changeModel(selected[0]);
           }}
         />
       )}
@@ -838,7 +894,10 @@ function _Chat() {
   const [showExport, setShowExport] = useState(false);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const [userInput, setUserInput] = useState("");
+  const [userInput, setUserInput] = useChatDraft(
+    session.id,
+    session.initialPrompt,
+  );
   const [encoderOpen, setEncoderOpen] = useState(false);
   const originals = useMemo(() => {
     let previous = "";
@@ -865,38 +924,21 @@ function _Chat() {
       if (pendingCommand.kind === "encoder") setEncoderOpen(true);
     }
     useCampusUI.getState().clearCommand();
-  }, [pendingCommand]);
+  }, [pendingCommand, setUserInput]);
   const [isLoading, setIsLoading] = useState(false);
   const { submitKey, shouldSubmit } = useSubmitHandler();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const isScrolledToBottom = scrollRef?.current
-    ? Math.abs(
-        scrollRef.current.scrollHeight -
-          (scrollRef.current.scrollTop + scrollRef.current.clientHeight),
-      ) <= 1
-    : false;
-  const isAttachWithTop = useMemo(() => {
-    const lastMessage = scrollRef.current?.lastElementChild as HTMLElement;
-    // if scrolllRef is not ready or no message, return false
-    if (!scrollRef?.current || !lastMessage) return false;
-    const topDistance =
-      lastMessage!.getBoundingClientRect().top -
-      scrollRef.current.getBoundingClientRect().top;
-    // leave some space for user question
-    return topDistance < 100;
-  }, [scrollRef?.current?.scrollHeight]);
-
-  const isTyping = userInput !== "";
-
-  // if user is typing, should auto scroll to bottom
-  // if user is not typing, should auto scroll to bottom only if already at bottom
   const { setAutoScroll, scrollDomToBottom } = useScrollToBottom(
     scrollRef,
-    (isScrolledToBottom || isAttachWithTop) && !isTyping,
     session.messages,
   );
   const [hitBottom, setHitBottom] = useState(true);
   const isMobileScreen = useMobileScreen();
+  useMobileViewport(isMobileScreen);
+  const [mobilePanel, setMobilePanel] = useState<
+    "tools" | "header" | "theme" | null
+  >(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const navigate = useNavigate();
   const [attachImages, setAttachImages] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -911,6 +953,8 @@ function _Chat() {
     budget: AttachmentBudget;
     alreadyAttached: number;
   } | null>(null);
+  const [scanFile, setScanFile] = useState("");
+  const scanChoice = useRef<((convert: boolean) => void) | null>(null);
   // Keep page ownership separate from URL equality: two PDF pages can render identically.
   const imageSources = useRef<
     Array<{ documentId: string; page: number } | null>
@@ -930,6 +974,8 @@ function _Chat() {
       uploadController.current?.abort();
       importChoice.current?.(null);
       importChoice.current = null;
+      scanChoice.current?.(false);
+      scanChoice.current = null;
       window.clearTimeout(attachmentToastTimer.current);
     };
   }, []);
@@ -1061,7 +1107,10 @@ function _Chat() {
       savedSources = [...imageSources.current];
     chatStore
       .onUserInput(messageWithAttachments(userInput, documents), attachImages)
-      .then(() => originalImages.current.clear())
+      .then(() => {
+        originalImages.current.clear();
+        setUserInput((draft) => (draft === userInput ? "" : draft));
+      })
       .catch((e) => {
         if (
           sentOwner !== currentIdentity() ||
@@ -1069,7 +1118,6 @@ function _Chat() {
         )
           return;
         reportAttachmentError((e as Error).message);
-        setUserInput(userInput);
         setAttachImages(savedImages);
         setDocuments(savedDocuments);
         imageSources.current = savedSources;
@@ -1083,7 +1131,6 @@ function _Chat() {
     setDocuments([]);
     setAttachmentError("");
     chatStore.setLastInput(userInput);
-    setUserInput("");
     setPromptHints([]);
     if (!isMobileScreen) inputRef.current?.focus();
     setAutoScroll(true);
@@ -1414,30 +1461,11 @@ function _Chat() {
   // edit / insert message modal
   const [isEditingMessage, setIsEditingMessage] = useState(false);
 
-  // remember unfinished input
   useEffect(() => {
-    // try to load from local storage
-    const key = identityStorageKey(UNFINISHED_INPUT(session.id));
-    const mayBeUnfinishedInput =
-      session.initialPrompt || localStorage.getItem(key);
     if (session.initialPrompt)
       chatStore.updateTargetSession(session, (s) => {
         delete s.initialPrompt;
       });
-    if (mayBeUnfinishedInput && userInput.length === 0) {
-      setUserInput(mayBeUnfinishedInput);
-      localStorage.removeItem(key);
-    }
-
-    const dom = inputRef.current;
-    const saveDraft = () => localStorage.setItem(key, dom?.value ?? "");
-    window.addEventListener("campus:before-reload", saveDraft);
-    window.addEventListener("beforeunload", saveDraft);
-    return () => {
-      saveDraft();
-      window.removeEventListener("campus:before-reload", saveDraft);
-      window.removeEventListener("beforeunload", saveDraft);
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1446,6 +1474,13 @@ function _Chat() {
     importChoice.current = null;
     setImportDialog(null);
     resolve?.(choice);
+  }
+
+  function finishScanChoice(convert: boolean) {
+    const resolve = scanChoice.current;
+    scanChoice.current = null;
+    setScanFile("");
+    resolve?.(convert);
   }
 
   async function importDocument(
@@ -1465,8 +1500,14 @@ function _Chat() {
           maxCharacters,
           pdfRange,
           signal,
+          onScannedPdf: () =>
+            new Promise<boolean>((resolve) => {
+              scanChoice.current = resolve;
+              setScanFile(file.name);
+            }),
         });
       } catch (error) {
+        if (error instanceof ScannedPdfError) return;
         if (!(error instanceof AttachmentTextLimitError)) throw error;
         const overflow = error;
         signal.throwIfAborted();
@@ -1512,7 +1553,10 @@ function _Chat() {
     }
   }
 
-  async function addFiles(files: File[]) {
+  async function addFiles(
+    files: File[],
+    preparedImages?: ReadonlyMap<File, string>,
+  ) {
     if (!files.length || uploadInProgress.current || preparing.current) return;
     const controller = new AbortController();
     uploadController.current = controller;
@@ -1556,10 +1600,9 @@ function _Chat() {
               throw new Error(
                 `每条消息最多添加 ${MAX_IMAGES} 张图片（含 PDF 页面）。`,
               );
-            const imageUrl = await prepareImageAttachment(
-              file,
-              controller.signal,
-            );
+            const imageUrl =
+              preparedImages?.get(file) ??
+              (await prepareImageAttachment(file, controller.signal));
             if (!active()) return;
             if (!isVisionModel(currentBudget().model)) {
               throw new Error("当前模型不支持图片，请先切换支持视觉的模型。");
@@ -1813,9 +1856,193 @@ function _Chat() {
 
   const [showChatSidePanel, setShowChatSidePanel] = useState(false);
 
+  const stopMessage = session.messages
+    .filter((message) => message.streaming)
+    .at(-1);
+  const toggleSearch = () =>
+    chatStore.updateTargetSession(session, (s) => {
+      s.webSearch = !s.webSearch;
+    });
+  const insertDictation = (text: string) =>
+    setUserInput(
+      (input) => input + (input && !/\s$/.test(input) ? " " : "") + text,
+    );
+  const openNewChat = () => {
+    chatStore.newSession();
+    navigate(Path.Chat);
+  };
+  async function editSelectedImage() {
+    const source =
+      attachImages[Math.min(editSelection, attachImages.length - 1)];
+    const original = originalImages.current.get(source);
+    if (!original) {
+      setEditImage(source);
+      return;
+    }
+    const owner = currentIdentity();
+    try {
+      const data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error("原图读取失败"));
+        reader.readAsDataURL(original);
+      });
+      if (owner === currentIdentity() && mounted.current) setEditImage(data);
+    } catch (error) {
+      reportAttachmentError((error as Error).message);
+    }
+  }
+  const imageEditTools = attachImages.length > 0 && (
+    <>
+      {attachImages.length > 1 && (
+        <select
+          aria-label="选择精修图片"
+          value={Math.min(editSelection, attachImages.length - 1)}
+          onChange={(event) => setEditSelection(Number(event.target.value))}
+        >
+          {attachImages.map((_, i) => (
+            <option value={i} key={i}>
+              图片 {i + 1}
+            </option>
+          ))}
+        </select>
+      )}
+      <button
+        type="button"
+        onClick={() => {
+          setMobilePanel(null);
+          void editSelectedImage();
+        }}
+      >
+        图片精修模式
+      </button>
+    </>
+  );
+  const contextMeter = (
+    <ContextMeter
+      session={session}
+      content={messageWithAttachments(userInput, documents)}
+      images={attachImages}
+      revision={libraryOpen}
+      embedded={isMobileScreen}
+    />
+  );
+
   return (
     <>
       <div className={styles.chat} key={session.id}>
+        {cameraOpen && (
+          <PhotoCapture
+            limit={Math.max(0, MAX_IMAGES - attachImages.length)}
+            onClose={() => setCameraOpen(false)}
+            onConfirm={(files, preparedImages) => {
+              setCameraOpen(false);
+              void addFiles(files, preparedImages);
+            }}
+          />
+        )}
+        {isMobileScreen && mobilePanel === "header" && (
+          <CampusDialog
+            title="会话操作"
+            sheet
+            onClose={() => setMobilePanel(null)}
+          >
+            <div className={mobileStyles.sheetGrid}>
+              <button type="button" onClick={() => setMobilePanel("theme")}>
+                外观
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobilePanel(null);
+                  setLibraryOpen(true);
+                }}
+              >
+                本会话资料库
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobilePanel(null);
+                  useFinale.getState().toggleZen();
+                }}
+              >
+                专注阅读
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobilePanel(null);
+                  setIsEditingMessage(true);
+                }}
+              >
+                编辑会话
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobilePanel(null);
+                  showToast(Locale.Chat.Actions.RefreshToast);
+                  chatStore.summarizeSession(true, session);
+                }}
+              >
+                {Locale.Chat.Actions.RefreshTitle}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobilePanel(null);
+                  setShowExport(true);
+                }}
+              >
+                {Locale.Chat.Actions.Export}
+              </button>
+            </div>
+          </CampusDialog>
+        )}
+        {isMobileScreen && mobilePanel === "theme" && (
+          <WorkspaceTheme onClose={() => setMobilePanel(null)} />
+        )}
+        {isMobileScreen && mobilePanel === "tools" && (
+          <CampusDialog
+            title="更多工具"
+            sheet
+            onClose={() => setMobilePanel(null)}
+          >
+            <div className={mobileStyles.sheetGrid}>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobilePanel(null);
+                  useFinale.getState().open("equations");
+                }}
+              >
+                公式草稿本
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobilePanel(null);
+                  setAudioOpen(true);
+                }}
+              >
+                音频转文字
+              </button>
+              <button
+                type="button"
+                aria-pressed={session.webSearch === true}
+                onClick={toggleSearch}
+              >
+                联网检索{session.webSearch ? " · 开" : ""}
+              </button>
+              {imageEditTools}
+            </div>
+            <div className={mobileStyles.sheetContext}>
+              {contextMeter}
+              <ContextCompactor session={session} />
+            </div>
+          </CampusDialog>
+        )}
         <TocRail
           messages={session.messages}
           onNavigate={(id, heading) => {
@@ -1893,15 +2120,14 @@ function _Chat() {
           data-tauri-drag-region
         >
           {isMobileScreen && (
-            <div className="window-actions">
-              <div className={"window-action-button"}>
-                <IconButton
-                  icon={<ReturnIcon />}
-                  bordered
-                  title={Locale.Chat.Actions.ChatList}
-                  onClick={() => navigate(Path.Home)}
-                />
-              </div>
+            <div className={mobileStyles.headerActions}>
+              <button
+                type="button"
+                aria-label="打开会话侧边栏"
+                onClick={() => navigate(Path.Home)}
+              >
+                <MenuIcon />
+              </button>
             </div>
           )}
 
@@ -1917,75 +2143,97 @@ function _Chat() {
             >
               {!session.topic ? DEFAULT_TOPIC : session.topic}
             </div>
-            <div className="window-header-sub-title">
-              {Locale.Chat.SubTitle(session.messages.length)}
-            </div>
-          </div>
-          <div className="window-actions">
-            <div className="window-action-button">
-              <IconButton
-                icon={<ReloadIcon />}
-                bordered
-                title={Locale.Chat.Actions.RefreshTitle}
-                onClick={() => {
-                  showToast(Locale.Chat.Actions.RefreshToast);
-                  chatStore.summarizeSession(true, session);
-                }}
-              />
-            </div>
             {!isMobileScreen && (
-              <div className="window-action-button">
-                <IconButton
-                  icon={<RenameIcon />}
-                  bordered
-                  title={Locale.Chat.EditMessage.Title}
-                  aria={Locale.Chat.EditMessage.Title}
-                  onClick={() => setIsEditingMessage(true)}
-                />
+              <div className="window-header-sub-title">
+                {Locale.Chat.SubTitle(session.messages.length)}
               </div>
             )}
-            <div className="window-action-button">
-              <IconButton
-                icon={<ExportIcon />}
-                bordered
-                title={Locale.Chat.Actions.Export}
-                onClick={() => {
-                  setShowExport(true);
-                }}
-              />
+          </div>
+          {isMobileScreen ? (
+            <div className={mobileStyles.headerActions}>
+              <button type="button" aria-label="新建对话" onClick={openNewChat}>
+                <AddIcon />
+              </button>
+              <button
+                type="button"
+                aria-label="更多会话操作"
+                aria-expanded={mobilePanel === "header"}
+                onClick={() => setMobilePanel("header")}
+              >
+                ···
+              </button>
             </div>
-            {showMaxIcon && (
+          ) : (
+            <div className="window-actions">
               <div className="window-action-button">
                 <IconButton
-                  icon={config.tightBorder ? <MinIcon /> : <MaxIcon />}
+                  icon={<ReloadIcon />}
                   bordered
-                  title={Locale.Chat.Actions.FullScreen}
-                  aria={Locale.Chat.Actions.FullScreen}
+                  title={Locale.Chat.Actions.RefreshTitle}
                   onClick={() => {
-                    config.update(
-                      (config) => (config.tightBorder = !config.tightBorder),
-                    );
+                    showToast(Locale.Chat.Actions.RefreshToast);
+                    chatStore.summarizeSession(true, session);
                   }}
                 />
               </div>
-            )}
-          </div>
+              {!isMobileScreen && (
+                <div className="window-action-button">
+                  <IconButton
+                    icon={<RenameIcon />}
+                    bordered
+                    title={Locale.Chat.EditMessage.Title}
+                    aria={Locale.Chat.EditMessage.Title}
+                    onClick={() => setIsEditingMessage(true)}
+                  />
+                </div>
+              )}
+              <div className="window-action-button">
+                <IconButton
+                  icon={<ExportIcon />}
+                  bordered
+                  title={Locale.Chat.Actions.Export}
+                  onClick={() => {
+                    setShowExport(true);
+                  }}
+                />
+              </div>
+              {showMaxIcon && (
+                <div className="window-action-button">
+                  <IconButton
+                    icon={config.tightBorder ? <MinIcon /> : <MaxIcon />}
+                    bordered
+                    title={Locale.Chat.Actions.FullScreen}
+                    aria={Locale.Chat.Actions.FullScreen}
+                    onClick={() => {
+                      config.update(
+                        (config) => (config.tightBorder = !config.tightBorder),
+                      );
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
-          <div className={clsx(campusStyles.toolbar, styles["header-tools"])}>
-            <WorkspaceTheme />
-            <button
-              type="button"
-              aria-label="快捷命令"
-              title="Ctrl / Cmd + K"
-              onClick={() => window.dispatchEvent(new Event("campus:commands"))}
-            >
-              ⌘ K
-            </button>
-            <button onClick={() => setLibraryOpen(true)}>本会话资料库</button>
-            <button onClick={() => useFinale.getState().toggleZen()}>
-              专注阅读
-            </button>
-          </div>
+          {!isMobileScreen && (
+            <div className={clsx(campusStyles.toolbar, styles["header-tools"])}>
+              <WorkspaceTheme />
+              <button
+                type="button"
+                aria-label="快捷命令"
+                title="Ctrl / Cmd + K"
+                onClick={() =>
+                  window.dispatchEvent(new Event("campus:commands"))
+                }
+              >
+                ⌘ K
+              </button>
+              <button onClick={() => setLibraryOpen(true)}>本会话资料库</button>
+              <button onClick={() => useFinale.getState().toggleZen()}>
+                专注阅读
+              </button>
+            </div>
+          )}
           <PromptToast
             showToast={!hitBottom}
             showModal={showPromptModal}
@@ -2221,7 +2469,18 @@ function _Chat() {
                             }
                           >
                             {reasoned &&
-                              (reasoned.reasoning || reasoned.thinking) && (
+                              (reasoned.reasoning || reasoned.thinking) &&
+                              (isMobileScreen ? (
+                                <MobileThinking
+                                  text={reasoned.reasoning}
+                                  thinking={
+                                    !!message.streaming && reasoned.thinking
+                                  }
+                                  startedAt={message.reasoningStartedAt}
+                                  durationMs={message.reasoningDurationMs}
+                                  fallback={message.reasoningFallback}
+                                />
+                              ) : (
                                 <ReasoningCapsule
                                   text={reasoned.reasoning}
                                   thinking={
@@ -2233,7 +2492,7 @@ function _Chat() {
                                   fallback={message.reasoningFallback}
                                   model={message.model}
                                 />
-                              )}
+                              ))}
                             <Markdown
                               key={message.streaming ? "loading" : "done"}
                               content={
@@ -2251,11 +2510,28 @@ function _Chat() {
                                 if (!isMobileScreen) return;
                                 setUserInput(getMessageTextContent(message));
                               }}
-                              fontSize={fontSize}
+                              fontSize={isMobileScreen ? 15.5 : fontSize}
                               fontFamily={fontFamily}
                               parentRef={scrollRef}
                               defaultShow={i >= messages.length - 6}
                             />
+                            {!isUser &&
+                              message.streaming &&
+                              !!(
+                                reasoned?.answer ||
+                                (!reasoned && message.content.length)
+                              ) && (
+                                <span
+                                  className={mobileStyles.cursor}
+                                  aria-hidden="true"
+                                />
+                              )}
+                            {!!message.omittedHistoryTurns && (
+                              <div className={styles["attachment-notice"]}>
+                                本次请求省略了 {message.omittedHistoryTurns}{" "}
+                                轮较早的普通对话。历史记录可继续查看。
+                              </div>
+                            )}
                             {!isUser && !message.preview && (
                               <>
                                 <SourceCitations
@@ -2376,6 +2652,17 @@ function _Chat() {
                   );
                 })}
             </div>
+            {!hitBottom && session.messages.length > 0 && (
+              <button
+                type="button"
+                className={mobileStyles.jumpBottom}
+                onClick={scrollToBottom}
+                aria-label="回到底部"
+                title="回到底部"
+              >
+                <BottomIcon />
+              </button>
+            )}
             <div
               className={clsx(styles["chat-input-panel"], {
                 [styles["drop-active"]]: dragging,
@@ -2457,7 +2744,9 @@ function _Chat() {
                   ))}
                 </div>
               )}
-              <ContextCompactor key={session.id} session={session} />
+              {!isMobileScreen && (
+                <ContextCompactor key={session.id} session={session} />
+              )}
               <SlashAutocomplete
                 input={userInput}
                 onSelect={(text) => {
@@ -2474,124 +2763,41 @@ function _Chat() {
               <div className={styles["composer-tools"]}>
                 <ChatActions
                   uploadImage={uploadImage}
-                  captureImage={(file) => {
-                    void addFiles([file]);
-                  }}
-                  setAttachImages={setAttachImages}
-                  setUploading={setUploading}
-                  showPromptModal={() => setShowPromptModal(true)}
-                  scrollToBottom={scrollToBottom}
-                  hitBottom={hitBottom}
+                  openCamera={() => setCameraOpen(true)}
+                  openTools={() => setMobilePanel("tools")}
+                  toolsOpen={mobilePanel === "tools"}
                   uploading={uploading}
-                  showPromptHints={() => {
-                    // Click again to close
-                    if (promptHints.length > 0) {
-                      setPromptHints([]);
-                      return;
-                    }
-
-                    inputRef.current?.focus();
-                    setUserInput("/");
-                    onSearch("");
-                  }}
-                  setShowShortcutKeyModal={setShowShortcutKeyModal}
-                  setUserInput={setUserInput}
-                  setShowChatSidePanel={setShowChatSidePanel}
                 />
-                <div
-                  className={clsx(
-                    campusStyles.toolbar,
-                    styles["composer-campus-tools"],
-                  )}
-                >
-                  <div className={finaleStyles.composerTools}>
-                    <button
-                      type="button"
-                      onClick={() => useFinale.getState().open("equations")}
-                    >
-                      ƒ 公式草稿本
-                    </button>
-                    <VoiceDictation
-                      key={session.id}
-                      onInsert={(text) => {
-                        setUserInput(
-                          (input) =>
-                            input +
-                            (input && !/\s$/.test(input) ? " " : "") +
-                            text,
-                        );
-                      }}
-                    />
-                  </div>
-                  {attachImages.length > 1 && (
-                    <select
-                      aria-label="选择精修图片"
-                      value={Math.min(editSelection, attachImages.length - 1)}
-                      onChange={(e) => setEditSelection(Number(e.target.value))}
-                    >
-                      {attachImages.map((_, i) => (
-                        <option value={i} key={i}>
-                          图片 {i + 1}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  <button
-                    type="button"
-                    aria-pressed={session.webSearch === true}
-                    onClick={() =>
-                      chatStore.updateTargetSession(session, (s) => {
-                        s.webSearch = !s.webSearch;
-                      })
-                    }
+                {!isMobileScreen && (
+                  <div
+                    className={clsx(
+                      campusStyles.toolbar,
+                      styles["composer-campus-tools"],
+                    )}
                   >
-                    联网检索{session.webSearch ? " · 开" : ""}
-                  </button>
-                  <button type="button" onClick={() => setAudioOpen(true)}>
-                    音频转文字
-                  </button>
-                  {attachImages.length > 0 && (
+                    <div className={finaleStyles.composerTools}>
+                      <button
+                        type="button"
+                        onClick={() => useFinale.getState().open("equations")}
+                      >
+                        ƒ 公式草稿本
+                      </button>
+                      <VoiceDictation onInsert={insertDictation} />
+                    </div>
                     <button
                       type="button"
-                      onClick={async () => {
-                        const source =
-                            attachImages[
-                              Math.min(editSelection, attachImages.length - 1)
-                            ],
-                          original = originalImages.current.get(source);
-                        if (!original) {
-                          setEditImage(source);
-                          return;
-                        }
-                        const owner = currentIdentity();
-                        try {
-                          const data = await new Promise<string>(
-                            (resolve, reject) => {
-                              const reader = new FileReader();
-                              reader.onload = () =>
-                                resolve(String(reader.result));
-                              reader.onerror = () =>
-                                reject(new Error("原图读取失败"));
-                              reader.readAsDataURL(original);
-                            },
-                          );
-                          if (owner === currentIdentity() && mounted.current)
-                            setEditImage(data);
-                        } catch (e) {
-                          setAttachmentError((e as Error).message);
-                        }
-                      }}
+                      aria-pressed={session.webSearch === true}
+                      onClick={toggleSearch}
                     >
-                      图片精修模式
+                      联网检索{session.webSearch ? " · 开" : ""}
                     </button>
-                  )}
-                  <ContextMeter
-                    session={session}
-                    content={messageWithAttachments(userInput, documents)}
-                    images={attachImages}
-                    revision={libraryOpen}
-                  />
-                </div>
+                    <button type="button" onClick={() => setAudioOpen(true)}>
+                      音频转文字
+                    </button>
+                    {imageEditTools}
+                    {contextMeter}
+                  </div>
+                )}
               </div>
               {session.workflowId && (
                 <div className={juniorStyles.specialist}>
@@ -2615,31 +2821,33 @@ function _Chat() {
                   </button>
                 </div>
               )}
-              <label
+              <div
                 className={clsx(styles["chat-input-panel-inner"], {
                   [styles["chat-input-panel-inner-attach"]]:
                     attachImages.length !== 0,
+                  [styles["mobile-input"]]: isMobileScreen,
                 })}
-                htmlFor="chat-input"
               >
                 <textarea
                   id="chat-input"
                   ref={inputRef}
                   className={styles["chat-input"]}
                   placeholder={
-                    WORKSPACE_QUOTES[quoteIndex % WORKSPACE_QUOTES.length]
+                    isMobileScreen
+                      ? "输入消息…"
+                      : WORKSPACE_QUOTES[quoteIndex % WORKSPACE_QUOTES.length]
                   }
                   aria-label="消息输入框"
                   onInput={(e) => onInput(e.currentTarget.value)}
                   value={userInput}
                   onKeyDown={onInputKeyDown}
-                  onFocus={scrollToBottom}
-                  onClick={scrollToBottom}
+                  onFocus={isMobileScreen ? undefined : scrollToBottom}
+                  onClick={isMobileScreen ? undefined : scrollToBottom}
                   onPaste={handlePaste}
-                  rows={inputRows}
+                  rows={isMobileScreen ? Math.max(1, inputRows - 1) : inputRows}
                   autoFocus={autoFocus}
                   style={{
-                    fontSize: config.fontSize,
+                    fontSize: isMobileScreen ? 16 : config.fontSize,
                     fontFamily: config.fontFamily,
                   }}
                 />
@@ -2680,16 +2888,31 @@ function _Chat() {
                     })}
                   </div>
                 )}
+                {isMobileScreen && (
+                  <VoiceDictation compact onInsert={insertDictation} />
+                )}
                 <IconButton
-                  icon={<SendWhiteIcon />}
-                  text={Locale.Chat.Send}
+                  icon={
+                    isMobileScreen && stopMessage ? (
+                      <StopIcon />
+                    ) : (
+                      <SendWhiteIcon />
+                    )
+                  }
+                  text={isMobileScreen ? undefined : Locale.Chat.Send}
                   className={styles["chat-input-send"]}
                   type="primary"
-                  onClick={() => doSubmit(userInput)}
-                  disabled={uploading || isLoading}
-                  aria="发送消息"
+                  onClick={() => {
+                    if (isMobileScreen && stopMessage)
+                      ChatControllerPool.stop(session.id, stopMessage.id);
+                    else doSubmit(userInput);
+                  }}
+                  disabled={
+                    !(isMobileScreen && stopMessage) && (uploading || isLoading)
+                  }
+                  aria={isMobileScreen && stopMessage ? "停止生成" : "发送消息"}
                 />
-              </label>
+              </div>
             </div>
           </div>
           <div
@@ -2725,6 +2948,20 @@ function _Chat() {
 
       {showShortcutKeyModal && (
         <ShortcutKeyModal onClose={() => setShowShortcutKeyModal(false)} />
+      )}
+      {scanFile && (
+        <CampusDialog
+          title="扫描版 PDF"
+          onClose={() => finishScanChoice(false)}
+        >
+          <p>{scanFile}</p>
+          <p>{PDF_SCAN_NOTICE}</p>
+          {isVisionModel(session.mask.modelConfig.model) && (
+            <button type="button" onClick={() => finishScanChoice(true)}>
+              将前几页转为图片添加
+            </button>
+          )}
+        </CampusDialog>
       )}
       {importDialog && (
         <AttachmentImportDialog

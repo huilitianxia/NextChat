@@ -45,6 +45,36 @@
   line-height: 1.75;
   font-size: 14px;
 }
+.sheetBackdrop {
+  align-items: end;
+  padding: 0;
+  background: #06171a56;
+  backdrop-filter: blur(4px);
+
+  .dialog {
+    width: min(520px, 100%);
+    max-height: min(82dvh, var(--mobile-viewport-height, 100dvh));
+    border-radius: 25px 25px 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+    box-sizing: border-box;
+    animation: sheet-enter 180ms ease-out;
+  }
+  .dialogBody {
+    padding: 14px 16px 18px;
+    overscroll-behavior-y: contain;
+  }
+}
+@keyframes sheet-enter {
+  from {
+    transform: translateY(18px);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheetBackdrop .dialog {
+    animation: none;
+  }
+}
 .toolbar,
 .exportBar {
   display: flex;

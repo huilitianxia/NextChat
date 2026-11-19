@@ -1,7 +1,13 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { CampusDialog } from "./campus-dialog";
-import { AUDIO_ACCEPT, transcribeAudio } from "../utils/audio-transcription";
+import {
+  AUDIO_ACCEPT,
+  AUDIO_REQUEST_LIMIT,
+  AUDIO_SPLIT_NOTICE,
+  MAX_AUDIO_BYTES,
+  transcribeAudio,
+} from "../utils/audio-transcription";
 import styles from "./campus.module.scss";
 export default function AudioTranscriber({
   file,
@@ -49,6 +55,7 @@ export default function AudioTranscriber({
             setSelected(e.target.files?.[0]);
             setText("");
             setError("");
+            setStatus("");
           }}
         />
       </label>
@@ -57,8 +64,18 @@ export default function AudioTranscriber({
           {selected.name} · {(selected.size / 1048576).toFixed(1)} MB
         </p>
       )}
+      {selected && selected.size > AUDIO_REQUEST_LIMIT && (
+        <p role="status" className={styles.notice}>
+          {selected.size > MAX_AUDIO_BYTES
+            ? "文件超过 25 MB 的本地处理上限，请压缩或分段后上传。"
+            : AUDIO_SPLIT_NOTICE}
+        </p>
+      )}
       <div className={styles.toolbar}>
-        <button disabled={!selected || busy} onClick={run}>
+        <button
+          disabled={!selected || busy || selected.size > MAX_AUDIO_BYTES}
+          onClick={run}
+        >
           开始转写
         </button>
         {busy && (

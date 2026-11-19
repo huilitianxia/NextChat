@@ -38,7 +38,8 @@ const imageB: MultimodalContent = {
 };
 
 beforeAll(() => {
-  globalThis.TextDecoder = TextDecoder;
+  globalThis.TextDecoder =
+    TextDecoder as unknown as typeof globalThis.TextDecoder;
 });
 
 beforeEach(() => {
@@ -287,5 +288,5 @@ function mockStreamResponse(body: string, status: number) {
         controller.close();
       },
     }),
-  } as Response;
+  } as unknown as Response;
 }

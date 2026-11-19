@@ -11,17 +11,22 @@ import {
 } from "../utils/context-meter";
 import { currentIdentity } from "../utils/identity-storage";
 import { useContextOperations } from "../store/context-operations";
+import { useWorkspacePreferences } from "../store/workspace-preferences";
+import { compactText } from "../utils/conversation-tools";
+import { isReasoningModel } from "../utils/reasoning";
 import styles from "./junior.module.scss";
 export function ContextMeter({
   session,
   content,
   images,
   revision,
+  embedded = false,
 }: {
   session: ChatSession;
   content: string;
   images: string[];
   revision?: boolean;
+  embedded?: boolean;
 }) {
   const [open, setOpen] = useState(false),
     [hovered, setHovered] = useState(false),
@@ -30,7 +35,9 @@ export function ContextMeter({
     ),
     [error, setError] = useState("");
   const operation = useContextOperations();
+  const effort = useWorkspacePreferences((state) => state.effort);
   const anchor = useRef<HTMLDivElement>(null),
+    detailsHost = useRef<HTMLDivElement>(null),
     hoverTimer = useRef<ReturnType<typeof setTimeout>>();
   const [placement, setPlacement] = useState<CSSProperties>({});
   const visible = open || hovered;
@@ -46,7 +53,7 @@ export function ContextMeter({
   };
   useEffect(() => () => clearTimeout(hoverTimer.current), []);
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || embedded) return;
     const position = () => {
       const rect = anchor.current?.getBoundingClientRect();
       if (!rect) return;
@@ -79,7 +86,7 @@ export function ContextMeter({
       window.removeEventListener("resize", position);
       window.removeEventListener("scroll", position, true);
     };
-  }, [visible]);
+  }, [visible, embedded]);
   useEffect(() => {
     let active = true;
     const owner = currentIdentity();
@@ -150,6 +157,24 @@ export function ContextMeter({
     ];
   const update = (f: (s: ChatSession) => void) =>
     useChatStore.getState().updateTargetSession(session, f);
+  const highCost =
+    gauge.total > 100_000 &&
+    (effort === "high" || effort === "xhigh") &&
+    isReasoningModel(session.mask.modelConfig.model);
+  const completed = highCost
+    ? session.messages.filter(
+        (message) => !message.streaming && !message.isError,
+      )
+    : [];
+  const openLightChat = () => {
+    const store = useChatStore.getState();
+    const notes = compactText(completed.slice(-16), 6000);
+    store.newSession(session.mask);
+    store.updateTargetSession(store.currentSession(), (next) => {
+      next.topic = session.topic + " · 轻量续聊";
+      next.memoryPrompt = notes;
+    });
+  };
   return (
     <div
       className={styles.gauge}
@@ -184,13 +209,32 @@ export function ContextMeter({
       <div className={styles.track}>
         <span style={{ width: `${gauge.width}%`, background: color }} />
       </div>
+      {highCost && (
+        <div className={styles.contextAdvisory}>
+          <span>
+            上下文已超过 100k token，高推理档位可能需要更多时间和算力。
+          </span>
+          <button
+            type="button"
+            disabled={!completed.length}
+            onClick={openLightChat}
+          >
+            提炼当前结论并开启轻量化新对话
+          </button>
+        </div>
+      )}
+      {embedded && <div ref={detailsHost} />}
       {visible &&
         typeof document !== "undefined" &&
         createPortal(
           <div
-            className={styles.popover}
-            style={placement}
-            role="dialog"
+            className={
+              embedded
+                ? styles.popover + " " + styles.inlineDetails
+                : styles.popover
+            }
+            style={embedded ? undefined : placement}
+            role={embedded ? "region" : "dialog"}
             aria-label="上下文明细"
             onMouseEnter={enter}
             onMouseLeave={leave}
@@ -249,7 +293,7 @@ export function ContextMeter({
               关闭明细
             </button>
           </div>,
-          document.body,
+          embedded && detailsHost.current ? detailsHost.current : document.body,
         )}
       {operation.sessionId === session.id && (
         <span role="status">

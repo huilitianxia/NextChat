@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 jest.unstable_mockModule("server-only", () => ({}));
 const { POST: transcribe } = await import("../app/api/transcribe/route");
 const { POST: search } = await import("../app/api/search/route");
+const { POST: timedSearch } = await import("../app/api/search/deadline/route");
 const { POST: imageEdit } = await import("../app/api/image-edit/route");
 const { identityIdForCode, getFriendAccessConfig, matchFriendProfile } =
   await import("../app/config/friend-profiles");
@@ -24,6 +25,7 @@ afterAll(() => {
   process.env = originalEnv;
   global.fetch = originalFetch;
 });
+afterEach(() => jest.useRealTimers());
 function request(
   path: string,
   body: BodyInit,
@@ -51,6 +53,77 @@ const picture = () => {
   form.set("prompt", "调整黄昏光照，保留构图");
   return form;
 };
+const searchRequest = () =>
+  request(
+    "search",
+    JSON.stringify({
+      model: "gpt-6.1-sol",
+      messages: [{ role: "user", content: "找公开资料" }],
+    }),
+    true,
+    true,
+  );
+
+test("an acknowledged but stalled search falls back after eight seconds", async () => {
+  jest.useFakeTimers();
+  let signal: AbortSignal | undefined;
+  (global.fetch as jest.Mock<typeof fetch>).mockImplementation(
+    async (_url, init) => {
+      signal = init?.signal || undefined;
+      return new Response(
+        new ReadableStream({
+          start(output) {
+            output.enqueue(
+              new TextEncoder().encode('data: {"type":"response.created"}\n\n'),
+            );
+          },
+        }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      );
+    },
+  );
+  const response = timedSearch(searchRequest());
+  await jest.advanceTimersByTimeAsync(7999);
+  expect(signal?.aborted).toBe(false);
+  await jest.advanceTimersByTimeAsync(1);
+  expect((await response).status).toBe(409);
+  expect(await (await response).json()).toMatchObject({ fallback: true });
+  expect(signal?.aborted).toBe(true);
+});
+
+test("a ready search forwards the original SSE bytes with an adapted Edge request", async () => {
+  const stream = [
+    'data: {"type":"response.created"}\r\n\r\n',
+    'data: {"type":"response.web_search_call.completed"}\n\n',
+    'data: {"type":"response.output_text.delta","delta":"结果"}\n\n',
+    'data: {"type":"response.completed"}\n\n',
+  ].join("");
+  (global.fetch as jest.Mock<typeof fetch>).mockResolvedValue(
+    new Response(stream, { headers: { "Content-Type": "text/event-stream" } }),
+  );
+  const original = searchRequest();
+  const requestShape = {
+    url: original.url,
+    method: original.method,
+    headers: original.headers,
+    body: original.body,
+    signal: original.signal,
+  } as NextRequest;
+  const response = await timedSearch(requestShape);
+  expect(response.status).toBe(200);
+  expect(await response.text()).toBe(stream);
+});
+
+test("the search deadline preserves authorization and falls back on 503", async () => {
+  expect((await timedSearch(request("search", "{}", false, true))).status).toBe(
+    401,
+  );
+  expect(global.fetch).not.toHaveBeenCalled();
+  (global.fetch as jest.Mock<typeof fetch>).mockResolvedValue(
+    Response.json({}, { status: 503 }),
+  );
+  expect((await timedSearch(searchRequest())).status).toBe(409);
+});
 test("all new routes authenticate before forwarding", async () => {
   for (const [route, body] of [
     [transcribe, audio()],

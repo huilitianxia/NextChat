@@ -1,5 +1,9 @@
 import { getHeaders } from "../client/api";
 export const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+export const AUDIO_REQUEST_LIMIT = 4 * 1024 * 1024;
+export const AUDIO_SPLIT_NOTICE =
+  "上传上限为 4 MiB。这段音频将先在本机分段，也可压缩或手动分段后再上传。";
+const MAX_AUDIO_CHUNK = 3_500_000;
 export const AUDIO_ACCEPT = ".m4a,.mp3,.wav,.webm";
 export const isAudioFile = (file: File) =>
   /\.(m4a|mp3|wav|webm)$/i.test(file.name);
@@ -40,6 +44,7 @@ export async function transcribeAudio(
   headers.delete("Content-Type");
   async function transcribe(blob: Blob, name: string) {
     signal.throwIfAborted();
+    if (blob.size > MAX_AUDIO_CHUNK) throw new Error(AUDIO_SPLIT_NOTICE);
     const form = new FormData();
     form.set("file", blob, name);
     const response = await fetch("/api/transcribe", {
@@ -52,16 +57,23 @@ export async function transcribeAudio(
     if (!response.ok) throw new Error(result.error || "转写失败");
     return String(result.text || "");
   }
-  if (file.size <= 3500000) {
+  if (file.size <= MAX_AUDIO_CHUNK) {
     progress("正在转写音频…");
     return transcribe(file, file.name);
   }
-  progress("正在本地解码与分段…");
+  progress(
+    file.size > AUDIO_REQUEST_LIMIT
+      ? AUDIO_SPLIT_NOTICE
+      : "正在本地解码与分段…",
+  );
   const context = new AudioContext({ sampleRate: 16000 });
   try {
     const buffer = await context.decodeAudioData(await file.arrayBuffer());
     signal.throwIfAborted();
-    const segmentLength = Math.floor(buffer.sampleRate * 100),
+    const segmentLength = Math.min(
+        Math.floor(buffer.sampleRate * 100),
+        (MAX_AUDIO_CHUNK - 44) / 2,
+      ),
       count = Math.ceil(buffer.length / segmentLength),
       texts: string[] = [];
     for (let part = 0; part < count; part++) {
@@ -85,7 +97,9 @@ export async function transcribeAudio(
     return texts.join("\n\n");
   } catch (e) {
     if ((e as Error).name === "EncodingError")
-      throw new Error("浏览器无法解码此音频，请转换为 MP3 或 WAV 后重试。");
+      throw new Error(
+        "浏览器无法解码此音频，请转换为 MP3 或 WAV，或先分段后重新上传。",
+      );
     throw e;
   } finally {
     await context.close();

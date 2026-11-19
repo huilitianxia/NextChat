@@ -51,6 +51,10 @@ if (mode !== "export") {
   nextConfig.rewrites = async () => {
     const ret = [
       {
+        source: "/api/search",
+        destination: "/api/search/deadline",
+      },
+      {
         source: "/google-fonts/:path*",
         destination: "https://fonts.googleapis.com/:path*",
       },

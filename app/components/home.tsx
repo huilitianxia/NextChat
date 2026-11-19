@@ -33,6 +33,8 @@ import { type ClientApi, getClientApi } from "../client/api";
 import { useAccessStore } from "../store";
 import clsx from "clsx";
 import { useFinale } from "../store/finale";
+import { STORAGE_ERROR_EVENT } from "../utils/indexedDB-storage";
+import { showToast } from "./ui-lib";
 
 export function Loading(props: { noLogo?: boolean }) {
   return (
@@ -150,6 +152,13 @@ function Screen() {
   const isAuth = location.pathname === Path.Auth;
   const isShare = /^\/?share=/.test(location.pathname);
   const access = useAccessStore();
+  useEffect(() => {
+    const onStorageError = (event: Event) =>
+      showToast((event as CustomEvent<string>).detail);
+    window.addEventListener(STORAGE_ERROR_EVENT, onStorageError);
+    return () =>
+      window.removeEventListener(STORAGE_ERROR_EVENT, onStorageError);
+  }, []);
   useEffect(() => {
     if (isShare) window.dispatchEvent(new Event("campus:share"));
   }, [isShare, location.pathname]);

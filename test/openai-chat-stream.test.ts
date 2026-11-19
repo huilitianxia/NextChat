@@ -162,6 +162,38 @@ test("heartbeats do not split an upstream SSE line or its multibyte text", async
   expect(await reply).toBe(": connected\n\n" + raw);
 });
 
+test("retries transient statuses once after 1 second and again after 2 seconds", async () => {
+  jest.useFakeTimers();
+  upstream
+    .mockResolvedValueOnce(Response.json({}, { status: 429 }))
+    .mockResolvedValueOnce(Response.json({}, { status: 503 }))
+    .mockResolvedValueOnce(sse());
+  const response = await POST(request());
+  const body = response.text();
+  await jest.advanceTimersByTimeAsync(999);
+  expect(upstream).toHaveBeenCalledTimes(1);
+  await jest.advanceTimersByTimeAsync(1);
+  expect(upstream).toHaveBeenCalledTimes(2);
+  await jest.advanceTimersByTimeAsync(1999);
+  expect(upstream).toHaveBeenCalledTimes(2);
+  await jest.advanceTimersByTimeAsync(1);
+  expect(upstream).toHaveBeenCalledTimes(3);
+  expect(await body).toBe(": connected\n\ndata: [DONE]\n\n");
+});
+
+test("retries stop when the browser disconnects during backoff", async () => {
+  jest.useFakeTimers();
+  const controller = new AbortController();
+  upstream.mockResolvedValueOnce(Response.json({}, { status: 502 }));
+  const response = await POST(request({}, { signal: controller.signal }));
+  const body = response.text();
+  await jest.advanceTimersByTimeAsync(100);
+  controller.abort();
+  await jest.advanceTimersByTimeAsync(5000);
+  expect(await body).toBe(": connected\n\n");
+  expect(upstream).toHaveBeenCalledTimes(1);
+});
+
 test("upstream may think past 180 seconds and is aborted at 240 seconds", async () => {
   jest.useFakeTimers();
   let signal: AbortSignal | null | undefined;

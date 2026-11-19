@@ -1,9 +1,13 @@
 import { create } from "zustand";
 import { combine, persist, createJSONStorage } from "zustand/middleware";
 import { Updater } from "../typing";
+import { StoreKey } from "../constant";
 import { deepClone } from "./clone";
 import { nanoid } from "nanoid";
-import { indexedDBStorage } from "@/app/utils/indexedDB-storage";
+import {
+  indexedDBStorage,
+  lightweightStorage,
+} from "@/app/utils/indexedDB-storage";
 import {
   currentIdentity,
   identityStorageKey,
@@ -41,16 +45,20 @@ export function createPersistStore<T extends object, M>(
   persistOptions: SecondParam<typeof persist<T & M & MakeUpdater<T>>>,
 ) {
   const originalName = persistOptions.name;
-  const scoped = originalName !== "access-control";
+  const scoped = originalName !== StoreKey.Access;
+  const storage =
+    originalName === StoreKey.Config || !scoped
+      ? lightweightStorage
+      : indexedDBStorage;
   let suspended = false;
   if (scoped) persistOptions.name = identityStorageKey(originalName);
   persistOptions.storage = createJSONStorage(() => ({
-    getItem: (key: string) => indexedDBStorage.getItem(key),
+    getItem: (key: string) => storage.getItem(key),
     setItem: (key: string, value: string) =>
       suspended || (scoped && currentIdentity() === "locked")
         ? Promise.resolve()
-        : indexedDBStorage.setItem(key, value),
-    removeItem: (key: string) => indexedDBStorage.removeItem(key),
+        : storage.setItem(key, value),
+    removeItem: (key: string) => storage.removeItem(key),
   }));
   const oldOonRehydrateStorage = persistOptions?.onRehydrateStorage;
   persistOptions.onRehydrateStorage = (state) => {

@@ -3,10 +3,13 @@ import { useEffect, useRef, useState } from "react";
 import { currentIdentity } from "../utils/identity-storage";
 import { transcribeAudio } from "../utils/audio-transcription";
 import styles from "./finale.module.scss";
+import mobileStyles from "./mobile-chat.module.scss";
 export default function VoiceDictation({
   onInsert,
+  compact = false,
 }: {
   onInsert: (text: string) => void;
+  compact?: boolean;
 }) {
   const [mode, setMode] = useState<
       "idle" | "speech" | "recording" | "transcribing"
@@ -188,22 +191,31 @@ export default function VoiceDictation({
     <>
       <button
         type="button"
+        className={compact ? mobileStyles.voiceButton : undefined}
+        title={compact ? status || "语音听写" : undefined}
         aria-label={mode === "idle" ? "语音听写" : "停止听写"}
         aria-pressed={mode !== "idle"}
         onClick={start}
       >
-        {mode === "recording"
-          ? "■ 停止录音"
-          : mode === "transcribing"
-          ? "取消转写"
-          : mode === "speech"
-          ? "■ 停止听写"
-          : fallback
-          ? "● 录音转写"
-          : "◉ 语音听写"}
+        {compact ? (
+          <span className={mobileStyles.micIcon} aria-hidden="true" />
+        ) : mode === "recording" ? (
+          "■ 停止录音"
+        ) : mode === "transcribing" ? (
+          "取消转写"
+        ) : mode === "speech" ? (
+          "■ 停止听写"
+        ) : fallback ? (
+          "● 录音转写"
+        ) : (
+          "◉ 语音听写"
+        )}
       </button>
       {status && (
-        <span role="status" className={styles.muted}>
+        <span
+          role="status"
+          className={compact ? mobileStyles.voiceStatus : styles.muted}
+        >
           {status}
         </span>
       )}

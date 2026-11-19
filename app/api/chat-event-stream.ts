@@ -8,12 +8,63 @@ import type { ReasoningEffort } from "../utils/reasoning";
 
 const UPSTREAM_TIMEOUT_MS = 240_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
+const RETRY_DELAYS_MS = [1000, 2000];
+const RETRYABLE_STATUS = [429, 502, 503];
 
 type Upstream = {
   response: Response;
   effective?: ReasoningEffort;
   fallback?: boolean;
 };
+
+async function gatewayTimeoutBeforeRetry(response: Response) {
+  if (
+    isGatewayTimeout(
+      response.status,
+      response.headers.get("x-vercel-error") ?? "",
+    )
+  )
+    return true;
+  if (response.status !== 502 || !response.body) return false;
+  const reader = response.clone().body!.getReader();
+  const decoder = new TextDecoder();
+  const stopReading = () => {
+    void reader.cancel().catch(() => {});
+  };
+  const timer = setTimeout(stopReading, 250);
+  let prefix = "";
+  try {
+    while (prefix.length < 4096) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      prefix += decoder.decode(value.subarray(0, 4096 - prefix.length), {
+        stream: true,
+      });
+      if (isGatewayTimeout(undefined, prefix)) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+    stopReading();
+  }
+}
+
+function waitForRetry(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    signal.throwIfAborted();
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", cancel);
+      resolve();
+    }, ms);
+    const cancel = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", cancel, { once: true });
+  });
+}
 
 export function chatEventStream(
   requestSignal: AbortSignal,
@@ -59,6 +110,19 @@ export function chatEventStream(
     stop(true);
   }
 
+  async function connect() {
+    const signal = upstream.signal;
+    let attempt = await openUpstream(signal);
+    for (const delay of RETRY_DELAYS_MS) {
+      if (!RETRYABLE_STATUS.includes(attempt.response.status)) break;
+      if (await gatewayTimeoutBeforeRetry(attempt.response)) break;
+      void attempt.response.body?.cancel().catch(() => {});
+      await waitForRetry(delay, signal);
+      attempt = await openUpstream(signal);
+    }
+    return attempt;
+  }
+
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
       output = controller;
@@ -85,9 +149,7 @@ export function chatEventStream(
 
       try {
         if (!reader) {
-          const { response, effective, fallback } = await openUpstream(
-            upstream.signal,
-          );
+          const { response, effective, fallback } = await connect();
 
           if (closed) {
             void response.body?.cancel().catch(() => {});

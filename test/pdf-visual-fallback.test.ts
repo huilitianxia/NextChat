@@ -3,6 +3,7 @@
 import { jest } from "@jest/globals";
 import {
   MAX_PDF_IMAGE_DATA_URL_LENGTH,
+  ScannedPdfError,
   readDocumentAttachment,
 } from "../app/utils/attachments";
 
@@ -179,6 +180,34 @@ test("forty readable characters per page meet the text threshold", async () => {
   pdf({ texts: ["字".repeat(40)] });
   expect((await read()).images).toEqual([]);
   expect(createElement).not.toHaveBeenCalled();
+});
+
+test("a likely scan asks before rendering any page", async () => {
+  const task = pdf({ texts: ["字".repeat(19), " ".repeat(100)] });
+  const onScannedPdf = jest.fn(async () => false);
+  await expect(
+    readDocumentAttachment(file(), {
+      supportsVision: true,
+      maxImages: 8,
+      maxCharacters: 50_000,
+      onScannedPdf,
+    }),
+  ).rejects.toBeInstanceOf(ScannedPdfError);
+  expect(onScannedPdf).toHaveBeenCalledTimes(1);
+  expect(task.renderOrder).toEqual([]);
+  expect(task.destroy).toHaveBeenCalledTimes(1);
+});
+
+test("exactly twenty readable characters per page skip the scan prompt", async () => {
+  pdf({ texts: ["字".repeat(20)] });
+  const onScannedPdf = jest.fn(async () => false);
+  await readDocumentAttachment(file(), {
+    supportsVision: true,
+    maxImages: 8,
+    maxCharacters: 50_000,
+    onScannedPdf,
+  });
+  expect(onScannedPdf).not.toHaveBeenCalled();
 });
 
 test("without vision, empty scans explain switching model and never render", async () => {

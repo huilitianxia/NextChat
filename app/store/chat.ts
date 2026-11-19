@@ -1,11 +1,6 @@
 import { useWorkspacePreferences } from "./workspace-preferences";
 import { ReasoningEffort, splitReasoning } from "../utils/reasoning";
-import {
-  getMessageTextContent,
-  isDalle3,
-  safeLocalStorage,
-  trimTopic,
-} from "../utils";
+import { getMessageTextContent, isDalle3, trimTopic } from "../utils";
 
 import { nanoid } from "nanoid";
 import type {
@@ -16,7 +11,9 @@ import type {
 import { getClientApi } from "../client/api";
 import { ChatControllerPool } from "../client/controller";
 import {
+  CHAT_INTERRUPTED_MESSAGE,
   GATEWAY_TIMEOUT_MESSAGE,
+  isChatNetworkInterruption,
   isGatewayTimeout,
 } from "../utils/chat-stream-protocol";
 import { showToast } from "../components/ui-lib";
@@ -45,12 +42,13 @@ import type {
   ImageRevision,
 } from "../utils/campus-types";
 import { assertSafePrompt } from "../utils/security-guard";
+import { fitChatHistory } from "../utils/chat-payload";
 import {
-  chatMessagesBytes,
-  fileSizeLabel,
-  MAX_CHAT_REQUEST_BYTES,
-} from "../utils/attachment-policy";
-import { currentIdentity } from "../utils/identity-storage";
+  currentIdentity,
+  identityChanging,
+  identityStorageKey,
+} from "../utils/identity-storage";
+import { reportStorageError } from "../utils/indexedDB-storage";
 import { workflowInstruction } from "../config/workflow-templates";
 import {
   activeSummary,
@@ -64,8 +62,6 @@ import {
   estimateContext,
   tokenGauge,
 } from "../utils/context-meter";
-
-const localStorage = safeLocalStorage();
 
 export type ChatMessageTool = {
   id: string;
@@ -81,6 +77,7 @@ export type ChatMessageTool = {
 };
 
 export type ChatMessage = RequestMessage & {
+  omittedHistoryTurns?: number;
   reasoningEffort?: ReasoningEffort;
   reasoningFallback?: boolean;
   reasoningStartedAt?: number;
@@ -251,6 +248,7 @@ const DEFAULT_CHAT_STATE = {
   currentSessionIndex: 0,
   lastInput: "",
 };
+const SESSION_INDEX_KEY = "chat-session-index";
 
 export const useChatStore = createPersistStore(
   DEFAULT_CHAT_STATE,
@@ -517,6 +515,16 @@ export const useChatStore = createPersistStore(
           get().currentSession().id !== session.id
         )
           throw new Error("会话已切换，请重新发送。");
+        const { messages: sendMessages, removed } = fitChatHistory(
+          composeRequest(recentMessages, userMessage, specialist, rag),
+        );
+        if (removed) {
+          botMessage.omittedHistoryTurns = removed;
+          gauge = tokenGauge(
+            estimateContext(sendMessages.slice(0, -1), userMessage).total,
+            contextWindow(session.contextWindow),
+          );
+        }
         if (gauge.exceeded)
           throw new Error(
             `估算上下文为 ${gauge.total.toLocaleString(
@@ -525,20 +533,6 @@ export const useChatStore = createPersistStore(
               "zh-CN",
             )} token。请先浓缩历史、移除附件或新建会话。草稿与附件已保留。`,
           );
-        const sendMessages = composeRequest(
-          recentMessages,
-          userMessage,
-          specialist,
-          rag,
-        );
-        const requestBytes = chatMessagesBytes(sendMessages);
-        if (requestBytes > MAX_CHAT_REQUEST_BYTES) {
-          throw new Error(
-            `当前请求约 ${fileSizeLabel(
-              requestBytes,
-            )}（含历史与附件），发送上限为 4 MiB。请减少图片或附件，或新建会话。草稿与附件已保留。`,
-          );
-        }
         const messageIndex = session.messages.length + 1;
 
         // save user's and bot's message
@@ -554,6 +548,8 @@ export const useChatStore = createPersistStore(
         });
 
         const api: ClientApi = getClientApi(modelConfig.providerName);
+        let requestController: AbortController | undefined;
+        const submittedAt = Date.now();
         // make request
         api.llm.chat({
           messages: sendMessages,
@@ -589,7 +585,7 @@ export const useChatStore = createPersistStore(
               botMessage.content = message;
               const reasoning = splitReasoning(message);
               if (reasoning.reasoning && !botMessage.reasoningStartedAt)
-                botMessage.reasoningStartedAt = Date.now();
+                botMessage.reasoningStartedAt = submittedAt;
               if (
                 !reasoning.thinking &&
                 botMessage.reasoningStartedAt &&
@@ -636,15 +632,23 @@ export const useChatStore = createPersistStore(
           },
           onError(error) {
             if (owner !== currentIdentity()) return;
-            const isAborted = error.message?.includes?.("aborted");
+            const isAborted = requestController?.signal.aborted;
+            const interrupted =
+              !isAborted &&
+              (error.message === CHAT_INTERRUPTED_MESSAGE ||
+                isChatNetworkInterruption(error));
             const gatewayTimeout =
               error.message === GATEWAY_TIMEOUT_MESSAGE ||
               isGatewayTimeout(undefined, error.message);
-            botMessage.content +=
-              "\n\n" +
-              (gatewayTimeout
-                ? GATEWAY_TIMEOUT_MESSAGE
-                : prettyObject({ error: true, message: error.message }));
+            if (!isAborted) {
+              botMessage.content +=
+                "\n\n" +
+                (gatewayTimeout
+                  ? GATEWAY_TIMEOUT_MESSAGE
+                  : interrupted
+                  ? CHAT_INTERRUPTED_MESSAGE
+                  : prettyObject({ error: true, message: error.message }));
+            }
             botMessage.streaming = false;
             userMessage.isError = !isAborted;
             botMessage.isError = !isAborted;
@@ -659,6 +663,7 @@ export const useChatStore = createPersistStore(
             console.error("[Chat] failed ", error);
           },
           onController(controller) {
+            requestController = controller;
             // collect controller for stop/retry
             ChatControllerPool.addController(
               session.id,
@@ -880,6 +885,21 @@ export const useChatStore = createPersistStore(
   {
     name: StoreKey.Chat,
     version: 3.3,
+    merge(persistedState, state) {
+      const merged = { ...state, ...(persistedState as Partial<typeof state>) };
+      try {
+        const activeId = window.localStorage.getItem(
+          identityStorageKey(SESSION_INDEX_KEY),
+        );
+        const index = merged.sessions.findIndex(
+          (session) => session.id === activeId,
+        );
+        if (index >= 0) merged.currentSessionIndex = index;
+      } catch {
+        // Older saves retain the selected index in the database.
+      }
+      return merged;
+    },
     migrate(persistedState, version) {
       const state = persistedState as any;
       const newState = JSON.parse(
@@ -948,3 +968,20 @@ export const useChatStore = createPersistStore(
     },
   },
 );
+
+useChatStore.subscribe((state, previous) => {
+  if (
+    !state._hasHydrated ||
+    identityChanging() ||
+    currentIdentity() === "locked"
+  )
+    return;
+  const active = state.sessions[state.currentSessionIndex]?.id;
+  if (!active || active === previous.sessions[previous.currentSessionIndex]?.id)
+    return;
+  try {
+    window.localStorage.setItem(identityStorageKey(SESSION_INDEX_KEY), active);
+  } catch (error) {
+    reportStorageError(error);
+  }
+});
