@@ -102,9 +102,16 @@ declare global {
   }
 }
 
+function splitApiKeys(keys = "") {
+  return keys.split(",").map((key) => key.trim());
+}
+
+export function getConfiguredOpenAIKeys() {
+  return splitApiKeys(process.env.OPENAI_API_KEY).filter(Boolean);
+}
+
 function getApiKey(keys?: string) {
-  const apiKeyEnvVar = keys ?? "";
-  const apiKeys = apiKeyEnvVar.split(",").map((v) => v.trim());
+  const apiKeys = splitApiKeys(keys);
   const randomIndex = Math.floor(Math.random() * apiKeys.length);
   const apiKey = apiKeys[randomIndex];
 

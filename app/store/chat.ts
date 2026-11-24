@@ -4,6 +4,7 @@ import { getMessageTextContent, isDalle3, trimTopic } from "../utils";
 
 import { nanoid } from "nanoid";
 import type {
+  ChatOptions,
   ClientApi,
   MultimodalContent,
   RequestMessage,
@@ -43,6 +44,7 @@ import type {
 } from "../utils/campus-types";
 import { assertSafePrompt } from "../utils/security-guard";
 import { fitChatHistory } from "../utils/chat-payload";
+import { ENGINEERING_PLOT_PROMPT } from "../utils/engineering-prompt";
 import {
   currentIdentity,
   identityChanging,
@@ -429,11 +431,15 @@ export const useChatStore = createPersistStore(
         content: string,
         attachImages?: string[],
         isMcpResponse?: boolean,
+        pythonSimulation = false,
       ) {
         assertSafePrompt(content);
         const owner = currentIdentity();
         const session = get().currentSession();
         const modelConfig = session.mask.modelConfig;
+        const sendSimulation = pythonSimulation
+          ? (await import("../client/python-chat")).requestPythonChat
+          : undefined;
         const { retrieveReferences, referenceContext } = await import(
           "../utils/local-rag"
         );
@@ -477,7 +483,14 @@ export const useChatStore = createPersistStore(
         });
 
         // get recent messages
-        let recentMessages = await get().getMessagesWithMemory(session);
+        const systemSupplement =
+          !pythonSimulation && !isMcpResponse && !isDalle3(modelConfig.model)
+            ? ENGINEERING_PLOT_PROMPT
+            : "";
+        let recentMessages = await get().getMessagesWithMemory(
+          session,
+          systemSupplement,
+        );
         if (
           owner !== currentIdentity() ||
           get().currentSession().id !== session.id
@@ -502,7 +515,10 @@ export const useChatStore = createPersistStore(
               "../utils/context-runtime"
             );
             await semanticCompaction(session.id, true);
-            recentMessages = await get().getMessagesWithMemory(session);
+            recentMessages = await get().getMessagesWithMemory(
+              session,
+              systemSupplement,
+            );
             gauge = tokenGauge(
               estimateContext(recentMessages, userMessage, specialist, rag)
                 .total,
@@ -547,11 +563,9 @@ export const useChatStore = createPersistStore(
           ]);
         });
 
-        const api: ClientApi = getClientApi(modelConfig.providerName);
         let requestController: AbortController | undefined;
         const submittedAt = Date.now();
-        // make request
-        api.llm.chat({
+        const chatOptions: ChatOptions = {
           messages: sendMessages,
           config: {
             ...modelConfig,
@@ -647,6 +661,8 @@ export const useChatStore = createPersistStore(
                   ? GATEWAY_TIMEOUT_MESSAGE
                   : interrupted
                   ? CHAT_INTERRUPTED_MESSAGE
+                  : pythonSimulation
+                  ? error.message
                   : prettyObject({ error: true, message: error.message }));
             }
             botMessage.streaming = false;
@@ -671,7 +687,13 @@ export const useChatStore = createPersistStore(
               controller,
             );
           },
-        });
+        };
+        if (sendSimulation) {
+          void sendSimulation(chatOptions);
+        } else {
+          const api: ClientApi = getClientApi(modelConfig.providerName);
+          api.llm.chat(chatOptions);
+        }
       },
 
       getMemoryPrompt() {
@@ -686,7 +708,7 @@ export const useChatStore = createPersistStore(
         }
       },
 
-      async getMessagesWithMemory(target?: ChatSession) {
+      async getMessagesWithMemory(target?: ChatSession, systemSupplement = "") {
         const session = target || get().currentSession();
         const modelConfig = session.mask.modelConfig;
         const clearContextIndex = session.clearContextIndex ?? 0;
@@ -727,6 +749,17 @@ export const useChatStore = createPersistStore(
               content: mcpSystemPrompt,
             }),
           ];
+        }
+
+        if (systemSupplement) {
+          const existing = systemPrompts[0];
+          if (existing) {
+            existing.content = existing.content + "\n\n" + systemSupplement;
+          } else {
+            systemPrompts = [
+              createMessage({ role: "system", content: systemSupplement }),
+            ];
+          }
         }
 
         if (shouldInjectSystemPrompts || mcpEnabled) {

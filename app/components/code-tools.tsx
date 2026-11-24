@@ -17,7 +17,7 @@ export default function CodeTools({
 }) {
   const open = useCampusUI((state) => state.openArtifact),
     name = language.toLowerCase();
-  const artifact = ["html", "svg", "mermaid", "echarts"].includes(name);
+  const artifact = ["mermaid", "echarts"].includes(name);
   return (
     <>
       {artifact && (

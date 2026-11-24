@@ -2,28 +2,20 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useCampusUI } from "../store/campus";
-import { useAccessStore } from "../store/access";
 import { currentIdentity } from "../utils/identity-storage";
 import { artifactDocument } from "../utils/artifact-document";
 import { saveFile } from "../utils/doc-io";
-import { svgPng } from "../utils/client-runtime";
+import { useArtifactFrame } from "./use-artifact-frame";
 import styles from "./campus.module.scss";
 export default function ArtifactPreview() {
-  const { artifact, closeArtifact } = useCampusUI();
-  const identity = useAccessStore((state) => state.friendProfile?.identityId);
-  const [source, setSource] = useState(""),
-    [error, setError] = useState(""),
-    [width, setWidth] = useState(520),
+  const { artifact: selected, closeArtifact } = useCampusUI();
+  const artifact = selected?.owner === currentIdentity() ? selected : null;
+  const [width, setWidth] = useState(520),
     [mobile, setMobile] = useState(false),
-    [version, setVersion] = useState(0),
-    [busy, setBusy] = useState(false);
-  const frame = useRef<HTMLIFrameElement>(null),
-    token = useRef(""),
-    pending = useRef<{
-      id: string;
-      timer: ReturnType<typeof setTimeout>;
-    } | null>(null),
-    resize = useRef<(() => void) | null>(null);
+    [version, setVersion] = useState(0);
+  const { frame, source, error, setError, ready, onLoad, busy, capture } =
+    useArtifactFrame(artifact, version);
+  const resize = useRef<(() => void) | null>(null);
   useEffect(() => {
     const media = matchMedia("(max-width:900px)");
     const update = () => setMobile(media.matches);
@@ -31,89 +23,7 @@ export default function ArtifactPreview() {
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
-  useEffect(() => {
-    if (!artifact || artifact.owner !== currentIdentity()) return;
-    let active = true;
-    token.current = crypto.randomUUID();
-    setSource("");
-    setError("");
-    artifactDocument(artifact, token.current)
-      .then((doc) => {
-        if (active) setSource(doc);
-      })
-      .catch((e) => {
-        if (active) setError(e.message);
-      });
-    return () => {
-      active = false;
-      if (pending.current) clearTimeout(pending.current.timer);
-      pending.current = null;
-      setBusy(false);
-      resize.current?.();
-    };
-  }, [artifact, identity, version]);
-  useEffect(() => {
-    const onMessage = async (event: MessageEvent) => {
-      const data = event.data;
-      if (
-        event.source !== frame.current?.contentWindow ||
-        !pending.current ||
-        data?.type !== "capture-result" ||
-        data.token !== token.current ||
-        data.id !== pending.current.id
-      )
-        return;
-      clearTimeout(pending.current.timer);
-      pending.current = null;
-      setBusy(false);
-      if (data.error) {
-        setError(String(data.error).slice(0, 500));
-        return;
-      }
-      try {
-        const serialized = JSON.stringify(data.data);
-        if (!serialized || serialized.length > 25 * 1024 * 1024)
-          throw new Error("导出内容过大或无效");
-        if (data.format === "snapshot") {
-          setBusy(true);
-          const { rasterizeSnapshot } = await import(
-            "../utils/artifact-raster"
-          );
-          await saveFile(await rasterizeSnapshot(data.data), "preview@2x.png");
-        } else if (
-          data.format === "svg-png" &&
-          typeof data.data === "string" &&
-          data.data.startsWith("<svg")
-        )
-          await saveFile(await svgPng(data.data), "preview@2x.png");
-        else if (
-          data.format === "svg" &&
-          typeof data.data === "string" &&
-          data.data.startsWith("<svg")
-        )
-          await saveFile(
-            new Blob([data.data], { type: "image/svg+xml" }),
-            "preview.svg",
-          );
-        else if (
-          data.format === "png" &&
-          typeof data.data === "string" &&
-          data.data.startsWith("data:image/png;base64,")
-        )
-          await saveFile(
-            await (await fetch(data.data)).blob(),
-            "preview@2x.png",
-          );
-        else setError("预览返回的导出格式无效");
-      } catch (e) {
-        setError((e as Error).message);
-      } finally {
-        setBusy(false);
-      }
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, []);
+  useEffect(() => () => resize.current?.(), [artifact]);
   useEffect(() => {
     if (!mobile || !artifact) return;
     const opener = document.activeElement as HTMLElement;
@@ -126,24 +36,7 @@ export default function ArtifactPreview() {
       if (opener?.isConnected) opener.focus();
     };
   }, [mobile, artifact, closeArtifact]);
-  if (!artifact || artifact.owner !== currentIdentity()) return null;
-  const capture = (format: "png" | "svg") => {
-    setError("");
-    setBusy(true);
-    const id = crypto.randomUUID();
-    pending.current = {
-      id,
-      timer: setTimeout(() => {
-        pending.current = null;
-        setBusy(false);
-        setError("导出超时，请刷新预览后重试。");
-      }, 20000),
-    };
-    frame.current?.contentWindow?.postMessage(
-      { type: "capture", token: token.current, id, format },
-      "*",
-    );
-  };
+  if (!artifact) return null;
   const panel = (
     <aside
       className={styles.preview}
@@ -189,12 +82,12 @@ export default function ArtifactPreview() {
           <button onClick={() => setVersion((v) => v + 1)} disabled={busy}>
             刷新
           </button>
-          <button onClick={() => capture("png")} disabled={!source || busy}>
+          <button onClick={() => capture("png")} disabled={!ready || busy}>
             高清 PNG
           </button>
           <button
             onClick={() => capture("svg")}
-            disabled={!source || busy || artifact.kind === "html"}
+            disabled={!ready || busy || artifact.kind === "html"}
           >
             SVG
           </button>
@@ -228,12 +121,13 @@ export default function ArtifactPreview() {
       </header>
       {source ? (
         <iframe
-        key={token.current}
+          key={version}
           ref={frame}
           title="作品预览沙箱"
           sandbox="allow-scripts"
           referrerPolicy="no-referrer"
           srcDoc={source}
+          onLoad={onLoad}
         />
       ) : (
         <p className={styles.muted}>正在准备本地预览…</p>

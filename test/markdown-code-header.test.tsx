@@ -32,20 +32,14 @@ jest.unstable_mockModule("@/app/locales", () => ({
 }));
 jest.unstable_mockModule("@/app/components/ui-lib", () => ({
   showImageModal: jest.fn(),
-  FullScreen: ({ children }: { children: React.ReactNode }) => (
-    <div>{children}</div>
-  ),
 }));
 jest.unstable_mockModule("@/app/components/artifacts", () => ({
   ArtifactsShareButton: () => <button>下载 HTML</button>,
-  HTMLPreview: React.forwardRef(function Preview(
-    { code }: { code: string },
-    _ref,
-  ) {
-    return <div data-testid="html-preview">{code}</div>;
-  }),
 }));
-for (const name of ["three-dots", "reload", "copy", "confirm"]) {
+jest.unstable_mockModule("@/app/components/simulation-image", () => ({
+  default: ({ alt }: { alt: string }) => <span>{alt}</span>,
+}));
+for (const name of ["three-dots", "copy", "confirm"]) {
   jest.unstable_mockModule(`@/app/icons/${name}.svg`, () => ({
     default: () => <svg />,
   }));
@@ -151,16 +145,52 @@ test("HTML preview stays separate from the code header and respects its setting"
   const { rerender } = render(
     <MarkdownContent content={`\`\`\`html\n${code}\`\`\``} />,
   );
-  await act(async () => {
-    jest.advanceTimersByTime(600);
-  });
-  expect(screen.getByTestId("html-preview").textContent).toBe(code);
+  const preview = await screen.findByTitle("HTML 图表预览");
+  expect(preview).toHaveAttribute("sandbox", "allow-scripts");
+  expect(preview.getAttribute("srcdoc")).toContain("<div>Hello</div>");
+  expect(screen.getByRole("tab", { name: "预览" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "代码" }));
+  expect(screen.getByRole("button", { name: "复制代码" })).toBeVisible();
+  expect(preview).not.toBeVisible();
+  fireEvent.click(screen.getByRole("tab", { name: "预览" }));
+  expect(screen.getByTitle("HTML 图表预览")).toBe(preview);
   expect(screen.getByRole("button", { name: "下载 HTML" })).toBeInTheDocument();
   config.enableArtifacts = false;
   rerender(
     <MarkdownContent content={`\`\`\`html\n${code}<!-- updated -->\n\`\`\``} />,
   );
-  expect(screen.queryByTestId("html-preview")).toBeNull();
+  expect(screen.queryByTitle("HTML 图表预览")).toBeNull();
+});
+
+test("a streaming fence mounts only after closure and keeps its frame through completion", async () => {
+  const opening =
+    '```svg\n<svg viewBox="0 0 10 10"><path d="M0 0L10 10"/></svg>\n';
+  const closed = opening + "```\n";
+  const { rerender } = render(<MarkdownContent streaming content={opening} />);
+  expect(screen.getByText("图形生成中…")).toBeVisible();
+  expect(screen.queryByTitle("SVG 图形预览")).toBeNull();
+  rerender(<MarkdownContent streaming content={closed.trimEnd()} />);
+  expect(screen.queryByTitle("SVG 图形预览")).toBeNull();
+  const frame = await screen.findByTitle("SVG 图形预览");
+  const source = frame.getAttribute("srcdoc");
+  rerender(<MarkdownContent streaming content={closed + "\n说明"} />);
+  rerender(<MarkdownContent content={closed + "\n说明完成。"} />);
+  expect(screen.getByTitle("SVG 图形预览")).toBe(frame);
+  expect(frame.getAttribute("srcdoc")).toBe(source);
+});
+
+test("completed messages show valid unclosed plots and leave plain HTML examples as code", async () => {
+  const svg = "```svg\n<svg><text>R1</text></svg>";
+  const { rerender } = render(<MarkdownContent streaming content={svg} />);
+  expect(screen.queryByTitle("SVG 图形预览")).toBeNull();
+  rerender(<MarkdownContent content={svg} />);
+  expect(await screen.findByTitle("SVG 图形预览")).toBeInTheDocument();
+  rerender(<MarkdownContent content={"```html\n这里没有 HTML 标签\n```"} />);
+  expect(screen.queryByTitle("HTML 图表预览")).toBeNull();
+  expect(screen.getByRole("button", { name: "复制代码" })).toBeVisible();
 });
 
 test("Mermaid preview receives raw diagram text and clears when its code becomes plain text", async () => {

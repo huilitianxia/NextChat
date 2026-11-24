@@ -505,6 +505,7 @@ export function ChatActions(props: {
   openTools: () => void;
   toolsOpen: boolean;
   uploading: boolean;
+  pythonSimulation?: boolean;
 }) {
   const chatStore = useChatStore();
   const session = chatStore.currentSession();
@@ -589,11 +590,16 @@ export function ChatActions(props: {
             onClick={props.openTools}
           >
             + 更多工具
-            {session.webSearch && (
+            {(session.webSearch || props.pythonSimulation) && (
               <span
                 className={mobileStyles.searchDot}
                 role="img"
-                aria-label="联网已开启"
+                aria-label={[
+                  session.webSearch && "联网已开启",
+                  props.pythonSimulation && "Python 仿真已开启",
+                ]
+                  .filter(Boolean)
+                  .join("，")}
               />
             )}
           </button>
@@ -926,6 +932,7 @@ function _Chat() {
     useCampusUI.getState().clearCommand();
   }, [pendingCommand, setUserInput]);
   const [isLoading, setIsLoading] = useState(false);
+  const [pythonSimulation, setPythonSimulation] = useState(false);
   const { submitKey, shouldSubmit } = useSubmitHandler();
   const scrollRef = useRef<HTMLDivElement>(null);
   const { setAutoScroll, scrollDomToBottom } = useScrollToBottom(
@@ -1106,7 +1113,12 @@ function _Chat() {
       savedDocuments = [...documents],
       savedSources = [...imageSources.current];
     chatStore
-      .onUserInput(messageWithAttachments(userInput, documents), attachImages)
+      .onUserInput(
+        messageWithAttachments(userInput, documents),
+        attachImages,
+        undefined,
+        pythonSimulation,
+      )
       .then(() => {
         originalImages.current.clear();
         setUserInput((draft) => (draft === userInput ? "" : draft));
@@ -1285,7 +1297,9 @@ function _Chat() {
     setIsLoading(true);
     const textContent = getMessageTextContent(userMessage);
     const images = getMessageImages(userMessage);
-    chatStore.onUserInput(textContent, images).then(() => setIsLoading(false));
+    chatStore
+      .onUserInput(textContent, images, undefined, pythonSimulation)
+      .then(() => setIsLoading(false));
     inputRef.current?.focus();
   };
 
@@ -1863,6 +1877,17 @@ function _Chat() {
     chatStore.updateTargetSession(session, (s) => {
       s.webSearch = !s.webSearch;
     });
+  const pythonToggle = (
+    <button
+      type="button"
+      aria-label="Python 仿真画图"
+      aria-pressed={pythonSimulation}
+      title="开启后将调用云端 Python 沙盒画图，响应略慢"
+      onClick={() => setPythonSimulation((enabled) => !enabled)}
+    >
+      Python 仿真画图{pythonSimulation ? " · 开" : ""}
+    </button>
+  );
   const insertDictation = (text: string) =>
     setUserInput(
       (input) => input + (input && !/\s$/.test(input) ? " " : "") + text,
@@ -2035,6 +2060,7 @@ function _Chat() {
               >
                 联网检索{session.webSearch ? " · 开" : ""}
               </button>
+              {pythonToggle}
               {imageEditTools}
             </div>
             <div className={mobileStyles.sheetContext}>
@@ -2494,7 +2520,7 @@ function _Chat() {
                                 />
                               ))}
                             <Markdown
-                              key={message.streaming ? "loading" : "done"}
+                              streaming={message.streaming}
                               content={
                                 reasoned
                                   ? reasoned.answer
@@ -2767,6 +2793,7 @@ function _Chat() {
                   openTools={() => setMobilePanel("tools")}
                   toolsOpen={mobilePanel === "tools"}
                   uploading={uploading}
+                  pythonSimulation={pythonSimulation}
                 />
                 {!isMobileScreen && (
                   <div
@@ -2791,6 +2818,7 @@ function _Chat() {
                     >
                       联网检索{session.webSearch ? " · 开" : ""}
                     </button>
+                    {pythonToggle}
                     <button type="button" onClick={() => setAudioOpen(true)}>
                       音频转文字
                     </button>
